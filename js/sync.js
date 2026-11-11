@@ -87,7 +87,13 @@ async function call(host, path, { arg, body, rpc = true } = {}, retry = true) {
   const headers = { Authorization: "Bearer " + (await token()) };
   let payload;
   if (rpc) { if (arg !== null && arg !== undefined) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(arg); } }
-  else { headers["Dropbox-API-Arg"] = JSON.stringify(arg); if (body) { headers["Content-Type"] = "application/octet-stream"; payload = body; } }
+  else {
+    // Content-Endpunkte: Argument als URL-Parameter (von Dropbox für Browser empfohlen) und
+    // ausdrücklicher Content-Type, damit kein Browser einen eigenen setzt.
+    path += "?arg=" + encodeURIComponent(JSON.stringify(arg));
+    headers["Content-Type"] = body ? "application/octet-stream" : "text/plain; charset=dropbox-cors-hack";
+    payload = body || "";
+  }
   const r = await fetch(host + path, { method: "POST", headers, body: payload });
   if (r.status === 401 && retry) { access = null; return call(host, path, { arg, body, rpc }, false); }
   if ((r.status === 429 || r.status === 503) && retry) {
@@ -97,8 +103,11 @@ async function call(host, path, { arg, body, rpc = true } = {}, retry = true) {
   return r;
 }
 const api = (path, arg) => call(API, path, { arg });
-async function errOf(r) { const t = await r.text().catch(() => ""); try { return JSON.parse(t).error_summary || t; } catch { return t; } }
-async function fail(r, what) { throw new Error(`${what}: ${r.status} ${(await errOf(r)).slice(0, 160)}`); }
+async function errOf(r) {
+  const t = await r.text().catch(() => "");
+  try { const j = JSON.parse(t); return (j.error_summary || "") + " " + JSON.stringify(j.error || "").slice(0, 200); } catch { return t; }
+}
+async function fail(r, what) { throw new Error(`${what}: ${r.status} ${(await errOf(r)).slice(0, 300)}`); }
 
 async function listFolder(folder) {
   const out = new Map();
