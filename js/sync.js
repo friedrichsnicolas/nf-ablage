@@ -1,27 +1,25 @@
-/* Geräte-Abgleich über OneDrive (Microsoft Graph) – Ende-zu-Ende-verschlüsselt.
+/* Geräte-Abgleich über Dropbox – Ende-zu-Ende-verschlüsselt.
  *
- * OneDrive sieht nur bereits verschlüsselte Pakete im App-Ordner „Apps/NF-Ablage“:
+ * Dropbox sieht nur bereits verschlüsselte Pakete im App-Ordner „Apps/<App-Name>“:
  *   vault.json        verpackter Datenschlüssel (wie lokal, ohne Passwort wertlos)
  *   docs/<id>.json    {iv, ct}  verschlüsselte Angaben eines Dokuments
  *   files/<id>.bin    IV (12 Byte) + verschlüsselter Dateiinhalt
- * Die App hat nur das Recht „Files.ReadWrite.AppFolder“: kein Zugriff auf den Rest des OneDrive.
+ * Die Dropbox-App ist als „App folder“ angelegt: kein Zugriff auf den Rest der Dropbox.
  *
  * Konflikte: Wurde ein Dokument auf zwei Geräten zugleich geändert, gewinnt die jüngere Änderung.
  */
 import * as C from "./crypto.js";
 import * as DB from "./db.js";
-import { ONEDRIVE } from "./config.js";
+import { DROPBOX } from "./config.js";
 
-const GRAPH = "https://graph.microsoft.com/v1.0";
-const SMALL = 4 * 1024 * 1024, CHUNK = 32 * 320 * 1024; // Upload-Sitzung in 10-MiB-Stücken
+const API = "https://api.dropboxapi.com", CONTENT = "https://content.dropboxapi.com";
 const te = new TextEncoder(), td = new TextDecoder();
 const b64url = u8 => C.b64(u8).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-export const redirectUri = () => location.origin + location.pathname.replace(/index\.html$/, "");
-export const enabled = () => !!ONEDRIVE.clientId;
+export const enabled = () => !!DROPBOX.appKey;
 
 let S, hooks, st = null, access = null, accessExp = 0, running = null, again = false, timer = null;
 const status = { state: "off", text: "" };
-const DEFAULT = () => ({ provider: "onedrive", refresh: null, account: "", revs: {}, up: {}, dirty: {}, gone: {}, gfiles: [], lastSync: null, needsLogin: false });
+const DEFAULT = () => ({ provider: "dropbox", refresh: null, account: "", revs: {}, up: {}, dirty: {}, gone: {}, gfiles: [], lastSync: null, needsLogin: false });
 
 export async function init(state, h) {
   S = state; hooks = h;
@@ -33,63 +31,40 @@ export const info = () => ({ ...status, account: st?.account || "", lastSync: st
 const save = () => DB.setMeta("sync", st);
 function setStatus(state, text = "") { status.state = state; status.text = text; hooks?.onStatus?.(info()); }
 
-/* ---------------- Anmeldung (OAuth 2.0 Autorisierungscode + PKCE) ---------------- */
+/* ---------------- Anmeldung (OAuth 2.0 Autorisierungscode + PKCE, ohne Server) ----------------
+ * Dropbox zeigt nach der Freigabe einen Code an, der in der App eingefügt wird. Das funktioniert
+ * überall gleich, auch in der iPhone-Home-Bildschirm-App (getrennter Speicher von Safari). */
 export async function authUrl() {
-  const verifier = b64url(C.rand(32)), state = b64url(C.rand(16));
+  const verifier = b64url(C.rand(32));
   const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", te.encode(verifier))));
-  await DB.setMeta("oauth", { verifier, state, t: Date.now() });
+  await DB.setMeta("oauth", { verifier, t: Date.now() });
   const q = new URLSearchParams({
-    client_id: ONEDRIVE.clientId, response_type: "code", redirect_uri: redirectUri(), response_mode: "query",
-    scope: ONEDRIVE.scopes, code_challenge: challenge, code_challenge_method: "S256", state,
+    client_id: DROPBOX.appKey, response_type: "code", token_access_type: "offline",
+    code_challenge: challenge, code_challenge_method: "S256",
   });
-  return `${ONEDRIVE.authority}/oauth2/v2.0/authorize?${q}`;
-}
-
-/* Wartet auf den Code aus dem Anmeldefenster (gleicher Browser) – alternativ wird er eingefügt. */
-export function waitForCode() {
-  return new Promise(resolve => {
-    const bc = "BroadcastChannel" in window ? new BroadcastChannel("nf-ablage-auth") : null;
-    const done = code => { bc?.close(); removeEventListener("message", onMsg); resolve(code); };
-    const onMsg = e => { if (e.origin === location.origin && e.data?.nfAuthCode) done(e.data.nfAuthCode); };
-    if (bc) bc.onmessage = e => e.data?.nfAuthCode && done(e.data.nfAuthCode);
-    addEventListener("message", onMsg);
-    waitForCode.cancel = () => { bc?.close(); removeEventListener("message", onMsg); };
-  });
-}
-
-/* Läuft auf der Rücksprungseite. Gibt true zurück, wenn es ein Anmelde-Rücksprung war. */
-export function handleCallback(render) {
-  const q = new URLSearchParams(location.search);
-  if (!q.has("code") && !q.has("error")) return false;
-  history.replaceState(null, "", redirectUri());
-  if (q.get("error")) { render({ error: q.get("error_description") || q.get("error") }); return true; }
-  const code = q.get("code");
-  try { new BroadcastChannel("nf-ablage-auth").postMessage({ nfAuthCode: code }); } catch {}
-  try { window.opener?.postMessage({ nfAuthCode: code }, location.origin); } catch {}
-  render({ code });
-  return true;
+  return `https://www.dropbox.com/oauth2/authorize?${q}`;
 }
 
 async function tokenRequest(params) {
-  const r = await fetch(`${ONEDRIVE.authority}/oauth2/v2.0/token`, {
+  const r = await fetch(`${API}/oauth2/token`, {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ client_id: ONEDRIVE.clientId, scope: ONEDRIVE.scopes, ...params }),
+    body: new URLSearchParams({ client_id: DROPBOX.appKey, ...params }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(j.error_description || j.error || "Anmeldung fehlgeschlagen"); e.code = j.error; throw e; }
-  access = j.access_token; accessExp = Date.now() + (j.expires_in - 120) * 1000;
+  access = j.access_token; accessExp = Date.now() + ((j.expires_in || 14400) - 120) * 1000;
   return j;
 }
 
 export async function exchangeCode(code) {
   const o = await DB.getMeta("oauth");
   if (!o) throw new Error("Anmeldung abgelaufen – bitte erneut verbinden.");
-  const j = await tokenRequest({ grant_type: "authorization_code", code: code.trim(), redirect_uri: redirectUri(), code_verifier: o.verifier });
+  const j = await tokenRequest({ grant_type: "authorization_code", code: code.trim(), code_verifier: o.verifier });
   await DB.setMeta("oauth", null);
   st = { ...(st || DEFAULT()), refresh: j.refresh_token, needsLogin: false };
   try {
-    const d = await (await graph("/me/drive?$select=owner")).json();
-    st.account = d.owner?.user?.displayName || "";
+    const r = await api("/2/users/get_current_account", null);
+    st.account = (await r.json()).name?.display_name || "";
   } catch {}
   await save(); setStatus("idle");
 }
@@ -97,12 +72,9 @@ export async function exchangeCode(code) {
 async function token() {
   if (access && Date.now() < accessExp) return access;
   if (!st?.refresh) throw Object.assign(new Error("Nicht verbunden"), { login: true });
-  try {
-    const j = await tokenRequest({ grant_type: "refresh_token", refresh_token: st.refresh });
-    if (j.refresh_token) { st.refresh = j.refresh_token; await save(); }
-    return access;
-  } catch (e) {
-    if (e.code) { // z. B. invalid_grant: Anmeldung abgelaufen (bei Web-Apps nach spätestens 24 h)
+  try { await tokenRequest({ grant_type: "refresh_token", refresh_token: st.refresh }); return access; }
+  catch (e) {
+    if (e.code) { // Zugriff in Dropbox widerrufen o. Ä.
       st.refresh = null; st.needsLogin = true; await save(); setStatus("login");
       throw Object.assign(e, { login: true });
     }
@@ -110,67 +82,54 @@ async function token() {
   }
 }
 
-async function graph(path, opt = {}, retry = true) {
-  const r = await fetch(path.startsWith("http") ? path : GRAPH + path,
-    { ...opt, headers: { Authorization: "Bearer " + (await token()), ...(opt.headers || {}) } });
-  if (r.status === 401 && retry) { access = null; return graph(path, opt, false); }
-  if (r.status === 429 || r.status === 503) {
-    const wait = Math.min(30, +(r.headers.get("Retry-After") || 3));
-    await new Promise(res => setTimeout(res, wait * 1000));
-    if (retry) return graph(path, opt, false);
+/* Dropbox-API-Aufruf. arg = JSON-Argument (RPC: Body, Content: Header). */
+async function call(host, path, { arg, body, rpc = true } = {}, retry = true) {
+  const headers = { Authorization: "Bearer " + (await token()) };
+  let payload;
+  if (rpc) { if (arg !== null && arg !== undefined) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(arg); } }
+  else { headers["Dropbox-API-Arg"] = JSON.stringify(arg); if (body) { headers["Content-Type"] = "application/octet-stream"; payload = body; } }
+  const r = await fetch(host + path, { method: "POST", headers, body: payload });
+  if (r.status === 401 && retry) { access = null; return call(host, path, { arg, body, rpc }, false); }
+  if ((r.status === 429 || r.status === 503) && retry) {
+    await new Promise(res => setTimeout(res, Math.min(30, +(r.headers.get("Retry-After") || 3)) * 1000));
+    return call(host, path, { arg, body, rpc }, false);
   }
   return r;
 }
-const P = p => `/me/drive/special/approot:/${p}:`;
-async function fail(r, what) { const t = await r.text().catch(() => ""); throw new Error(`${what}: ${r.status} ${t.slice(0, 160)}`); }
+const api = (path, arg) => call(API, path, { arg });
+async function errOf(r) { const t = await r.text().catch(() => ""); try { return JSON.parse(t).error_summary || t; } catch { return t; } }
+async function fail(r, what) { throw new Error(`${what}: ${r.status} ${(await errOf(r)).slice(0, 160)}`); }
 
 async function listFolder(folder) {
   const out = new Map();
-  let url = `${P(folder)}/children?$select=name,eTag&$top=999`;
-  while (url) {
-    const r = await graph(url);
-    if (r.status === 404) return out;
+  let r = await api("/2/files/list_folder", { path: "/" + folder, limit: 2000 });
+  for (;;) {
+    if (r.status === 409) { if ((await errOf(r)).includes("not_found")) return out; await fail(r, "Liste"); }
     if (!r.ok) await fail(r, "Liste");
     const j = await r.json();
-    j.value.forEach(i => out.set(i.name, i.eTag));
-    url = j["@odata.nextLink"] || null;
+    j.entries.filter(e => e[".tag"] === "file").forEach(e => out.set(e.name, e.rev));
+    if (!j.has_more) return out;
+    r = await api("/2/files/list_folder/continue", { cursor: j.cursor });
   }
-  return out;
 }
 async function download(path) {
-  const r = await graph(`${P(path)}/content`);
-  if (r.status === 404) return null;
+  const r = await call(CONTENT, "/2/files/download", { arg: { path: "/" + path }, rpc: false });
+  if (r.status === 409) { if ((await errOf(r)).includes("not_found")) return null; await fail(r, "Download"); }
   if (!r.ok) await fail(r, "Download");
   return new Uint8Array(await r.arrayBuffer());
 }
-/* match: eTag (nur überschreiben, wenn unverändert) | "new" (nur anlegen) | null (immer überschreiben) */
+/* match: rev (nur überschreiben, wenn unverändert) | "new" (nur anlegen) | null (immer überschreiben) */
 async function upload(path, data, match = null) {
-  if (data.byteLength <= SMALL) {
-    const headers = { "Content-Type": "application/octet-stream" };
-    if (match && match !== "new") headers["If-Match"] = match;
-    const qs = match === "new" ? "?@microsoft.graph.conflictBehavior=fail" : "";
-    const r = await graph(`${P(path)}/content${qs}`, { method: "PUT", headers, body: data });
-    if (r.status === 412 || r.status === 409) return { conflict: true };
-    if (!r.ok) await fail(r, "Upload");
-    return { etag: (await r.json()).eTag };
-  }
-  const s = await graph(`${P(path)}/createUploadSession`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "replace" } }),
-  });
-  if (!s.ok) await fail(s, "Upload-Sitzung");
-  const { uploadUrl } = await s.json();
-  let res;
-  for (let i = 0; i < data.byteLength; i += CHUNK) {
-    const end = Math.min(i + CHUNK, data.byteLength);
-    res = await fetch(uploadUrl, { method: "PUT", headers: { "Content-Range": `bytes ${i}-${end - 1}/${data.byteLength}` }, body: data.slice(i, end) });
-    if (!res.ok && res.status !== 202) await fail(res, "Upload-Teil");
-  }
-  return { etag: (await res.json().catch(() => ({}))).eTag };
+  const mode = match === "new" ? "add" : match ? { ".tag": "update", update: match } : "overwrite";
+  const r = await call(CONTENT, "/2/files/upload", { arg: { path: "/" + path, mode, autorename: false, mute: true, strict_conflict: true }, body: data, rpc: false });
+  if (r.status === 409) { const e = await errOf(r); if (e.includes("conflict")) return { conflict: true }; throw new Error("Upload: " + e); }
+  if (!r.ok) await fail(r, "Upload");
+  return { etag: (await r.json()).rev };
 }
 async function remove(path) {
-  const r = await graph(P(path), { method: "DELETE" });
-  if (!r.ok && r.status !== 404) await fail(r, "Löschen");
+  const r = await api("/2/files/delete_v2", { path: "/" + path });
+  if (r.status === 409 && (await errOf(r)).includes("not_found")) return;
+  if (!r.ok) await fail(r, "Löschen");
 }
 
 const packDoc = rec => te.encode(JSON.stringify({ iv: C.b64(rec.iv), ct: C.b64(rec.ct) }));
@@ -178,7 +137,7 @@ const unpackDoc = (id, u8) => { const j = JSON.parse(td.decode(u8)); return { id
 const packFile = rec => { const u = new Uint8Array(12 + rec.ct.byteLength); u.set(rec.iv); u.set(new Uint8Array(rec.ct), 12); return u; };
 const unpackFile = (id, u8) => ({ id, iv: u8.slice(0, 12), ct: u8.slice(12) });
 
-/* ---------------- Tresor in OneDrive ---------------- */
+/* ---------------- Tresor in Dropbox ---------------- */
 export async function remoteVault() {
   const u8 = await download("vault.json");
   return u8 ? JSON.parse(td.decode(u8)) : null;
@@ -201,7 +160,7 @@ export async function attach() {
   return { status: "other", vault: rv };
 }
 
-/* Lokale Dokumente in den Tresor aus OneDrive übernehmen (umverschlüsseln). */
+/* Lokale Dokumente in den Tresor aus Dropbox übernehmen (umverschlüsseln). */
 export async function adoptRemoteVault(rv, remoteKey) {
   const [docs, files] = await Promise.all([DB.all("docs"), DB.all("files")]);
   const newDocs = [], newFiles = [];
@@ -251,7 +210,7 @@ async function run() {
     // 1) Tresor (z. B. Passwort auf anderem Gerät geändert)
     const rv = await remoteVault();
     if (!rv) await pushVault();
-    else if (rv.vid !== S.meta.vid) throw new Error("In OneDrive liegt ein anderer Tresor. Bitte in den Einstellungen neu verbinden.");
+    else if (rv.vid !== S.meta.vid) throw new Error("In Dropbox liegt ein anderer Tresor. Bitte in den Einstellungen neu verbinden.");
     else if ((rv.changed || "") > (S.meta.changed || "")) { S.meta = rv; await DB.setMeta("vault", rv); }
     else if ((rv.changed || "") < (S.meta.changed || "")) await pushVault();
 

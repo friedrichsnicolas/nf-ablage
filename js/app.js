@@ -143,7 +143,6 @@ async function boot() {
     root.innerHTML = `<main class="gate"><h1>Nicht unterstützt</h1><p class="gate-sub">Dieser Browser bietet keine sichere Verschlüsselung (HTTPS erforderlich).</p></main>`;
     return;
   }
-  if (Sync.enabled() && Sync.handleCallback(renderCallback)) return;
   S.meta = await DB.getMeta("vault");
   S.prefs = { ...DEFAULT_PREFS, ...(await DB.getMeta("prefs")) };
   await Sync.init(S, { onStatus: renderSyncStatus, onRemoteChange: () => { if (S.key && $("#view")) renderView(); } });
@@ -171,7 +170,7 @@ function renderWelcome() {
       <button class="btn gold">Tresor anlegen</button>
       <p class="msg" role="alert"></p>
     </form>
-    ${Sync.enabled() ? `<button class="btn ghost-light od" id="od">${ico("cloud")} Ablage von OneDrive übernehmen</button>` : ""}
+    ${Sync.enabled() ? `<button class="btn ghost-light od" id="od">${ico("cloud")} Ablage von Dropbox übernehmen</button>` : ""}
     <button class="link" id="restore">Ich habe ein Backup – wiederherstellen</button>`);
   $("#od")?.addEventListener("click", connectNewDevice);
   const f = $("#f"), msg = $(".msg", f), meter = $(".meter", f);
@@ -228,7 +227,7 @@ function renderLock() {
     <button class="link" id="rec">Passwort vergessen? Wiederherstellungsschlüssel verwenden</button>`);
   const f = $("#f"), msg = $(".msg", f), btn = $("button.btn", f);
   setTimeout(() => f.pw.focus(), 50);
-  // Passwort auf anderem Gerät geändert? Neueren Tresor-Schlüssel aus OneDrive holen (nur verschlüsselt).
+  // Passwort auf anderem Gerät geändert? Neueren Tresor-Schlüssel aus Dropbox holen (nur verschlüsselt).
   if (Sync.connected() && navigator.onLine) Sync.remoteVault().then(async rv => {
     if (rv?.vid && rv.vid === S.meta.vid && (rv.changed || "") > (S.meta.changed || "")) { S.meta = rv; await DB.setMeta("vault", rv); }
   }).catch(() => {});
@@ -360,7 +359,7 @@ function renderMain() {
   $("#lockbtn").onclick = lock;
   $("#syncbtn").onclick = () => {
     const i = Sync.info();
-    if (i.state === "login") return reconnectOneDrive();
+    if (i.state === "login") return reconnectDropbox();
     Sync.syncNow(); if (i.text && i.state === "error") toast(i.text);
   };
   renderSyncStatus(Sync.info());
@@ -372,8 +371,8 @@ function renderMain() {
 function renderBanner() {
   const b = $("#banner"); if (!b) return;
   if (Sync.info().needsLogin) {
-    b.innerHTML = `<div class="banner">${ico("cloud")}<span>Die OneDrive-Anmeldung ist abgelaufen. Bitte kurz erneuern, damit deine Geräte weiter abgleichen.</span><button class="btn small" id="rc">Erneuern</button></div>`;
-    $("#rc").onclick = reconnectOneDrive; return;
+    b.innerHTML = `<div class="banner">${ico("cloud")}<span>Die Dropbox-Verbindung ist nicht mehr gültig. Bitte neu verbinden, damit deine Geräte weiter abgleichen.</span><button class="btn small" id="rc">Erneuern</button></div>`;
+    $("#rc").onclick = reconnectDropbox; return;
   }
   const last = S.prefs.lastBackup, days = last ? Math.floor((Date.now() - new Date(last)) / 864e5) : null;
   const synced = Sync.connected() && Sync.info().lastSync;
@@ -559,7 +558,7 @@ function openEditor(doc) {
   };
   const add = list => {
     for (const file of list) {
-      if (file.size > 200 * 1048576) { toast(`${file.name} ist größer als 200 MB`); continue; }
+      if (file.size > 140 * 1048576) { toast(`${file.name} ist größer als 140 MB`); continue; }
       const name = file.name && file.name !== "image.jpg" ? file.name : `Foto_${new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-")}.jpg`;
       pending.push({ name, blob: file });
       if (!f.title.value) f.title.value = name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ");
@@ -603,13 +602,13 @@ async function renderSettings() {
   const persisted = await navigator.storage?.persisted?.().catch(() => false);
   const nFiles = S.docs.reduce((a, d) => a + d.files.length, 0);
   const si = Sync.info();
-  const syncPanel = !Sync.enabled() ? "" : `<section class="panel"><h2>Geräte-Abgleich (OneDrive)</h2>
-      ${Sync.connected() ? `<p>Verbunden${si.account ? ` mit dem OneDrive von <b>${esc(si.account)}</b>` : ""}. ${si.lastSync ? `Zuletzt abgeglichen: ${new Date(si.lastSync).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}.` : ""}</p>
+  const syncPanel = !Sync.enabled() ? "" : `<section class="panel"><h2>Geräte-Abgleich (Dropbox)</h2>
+      ${Sync.connected() ? `<p>Verbunden${si.account ? ` mit der Dropbox von <b>${esc(si.account)}</b>` : ""}. ${si.lastSync ? `Zuletzt abgeglichen: ${new Date(si.lastSync).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}.` : ""}</p>
         ${si.state === "error" ? `<p class="hint">Letzter Fehler: ${esc(si.text)}</p>` : ""}
-        <div class="row wrap">${si.needsLogin ? `<button class="btn primary" id="odre">${ico("cloud")} Anmeldung erneuern</button>` : `<button class="btn primary" id="odsync">${ico("cloud")} Jetzt abgleichen</button>`}
+        <div class="row wrap">${si.needsLogin ? `<button class="btn primary" id="odre">${ico("cloud")} Neu verbinden</button>` : `<button class="btn primary" id="odsync">${ico("cloud")} Jetzt abgleichen</button>`}
         <button class="btn ghost" id="oddis">Verbindung trennen</button></div>`
-      : `<p>Gleicht deine Ablage über einen eigenen Ordner <b>Apps/NF-Ablage</b> in deinem OneDrive zwischen deinen Geräten ab. Dort liegen nur verschlüsselte Pakete, Microsoft kann nichts lesen. Die App erhält keinen Zugriff auf deine übrigen OneDrive-Dateien.</p>
-        <button class="btn primary" id="odcon">${ico("cloud")} Mit OneDrive verbinden</button>`}
+      : `<p>Gleicht deine Ablage über einen eigenen App-Ordner in deiner Dropbox zwischen deinen Geräten ab. Dort liegen nur verschlüsselte Pakete, Dropbox kann nichts lesen. Die App erhält keinen Zugriff auf deine übrigen Dropbox-Dateien.</p>
+        <button class="btn primary" id="odcon">${ico("cloud")} Mit Dropbox verbinden</button>`}
     </section>`;
   v.innerHTML = syncPanel + `
     <section class="panel"><h2>Backup</h2>
@@ -631,21 +630,21 @@ async function renderSettings() {
       <ul class="plain">
         <li>Dateien und Angaben werden mit <b>AES-256-GCM</b> verschlüsselt, bevor sie gespeichert werden.</li>
         <li>Der Schlüssel wird aus deinem Master-Passwort abgeleitet (PBKDF2, 600.000 Runden) und existiert nur, solange die App entsperrt ist.</li>
-        <li>Die App hat keinen eigenen Server. Verbindungen sind nur zu Microsoft (OneDrive-Abgleich, falls eingeschaltet) erlaubt, alle anderen blockiert eine strenge Sicherheitsrichtlinie. Zu OneDrive gelangen nur verschlüsselte Pakete.</li>
+        <li>Die App hat keinen eigenen Server. Verbindungen sind nur zu Dropbox (Geräte-Abgleich, falls eingeschaltet) erlaubt, alle anderen blockiert eine strenge Sicherheitsrichtlinie. Zu Dropbox gelangen nur verschlüsselte Pakete.</li>
         <li>Wer dein Gerät entsperrt in den Händen hält, während die Ablage offen ist, sieht die Dokumente. Darum sperrt sie sich automatisch.</li>
       </ul>
     </section>
     <section class="panel danger-zone"><h2>Tresor löschen</h2>
-      <p>Löscht alle Dokumente auf diesem Gerät unwiderruflich. Backups und die Kopie in OneDrive bleiben unberührt.</p>
+      <p>Löscht alle Dokumente auf diesem Gerät unwiderruflich. Backups und die Kopie in Dropbox bleiben unberührt.</p>
       <button class="btn danger" id="wipe">${ico("trash")} Alles löschen</button>
     </section>
     <p class="hint center">NF · Dokumentenablage ${APP_VERSION}</p>`;
   $("#exp").onclick = exportBackup;
-  $("#odcon")?.addEventListener("click", connectOneDrive);
-  $("#odre")?.addEventListener("click", reconnectOneDrive);
+  $("#odcon")?.addEventListener("click", connectDropbox);
+  $("#odre")?.addEventListener("click", reconnectDropbox);
   $("#odsync")?.addEventListener("click", async () => { await Sync.syncNow(); renderSettings(); });
   $("#oddis")?.addEventListener("click", async () => {
-    if (await ask({ title: "Verbindung trennen?", text: "Dieses Gerät gleicht dann nicht mehr ab. Die Dokumente bleiben hier und in OneDrive erhalten.", ok: "Trennen" })) { await Sync.disconnect(); renderSettings(); renderSyncStatus(Sync.info()); }
+    if (await ask({ title: "Verbindung trennen?", text: "Dieses Gerät gleicht dann nicht mehr ab. Die Dokumente bleiben hier und in Dropbox erhalten.", ok: "Trennen" })) { await Sync.disconnect(); renderSettings(); renderSyncStatus(Sync.info()); }
   });
   const imp = $("#imp"); imp.onclick = () => { S.picking = true; };
   imp.onchange = () => { S.picking = false; if (imp.files[0]) importBackup(imp.files[0]); imp.value = ""; };
@@ -744,47 +743,38 @@ function restoreBackupAtSetup() {
   inp.click();
 }
 
-/* ---------------- OneDrive ---------------- */
+/* ---------------- Dropbox ---------------- */
 function renderSyncStatus(i) {
   const b = $("#syncbtn"); if (!b) return;
   b.hidden = !Sync.connected();
   b.dataset.s = i.state;
-  const t = { busy: "Gleiche ab …", ok: "Abgeglichen", idle: "OneDrive verbunden", login: "OneDrive-Anmeldung erneuern", error: "Abgleich fehlgeschlagen – tippen für Details", offline: "Offline – gleicht später ab" }[i.state] || "";
+  const t = { busy: "Gleiche ab …", ok: "Abgeglichen", idle: "Dropbox verbunden", login: "Dropbox neu verbinden", error: "Abgleich fehlgeschlagen – tippen für Details", offline: "Offline – gleicht später ab" }[i.state] || "";
   b.title = t; b.setAttribute("aria-label", t);
   renderBanner();
 }
 
-function renderCallback({ code, error }) {
-  gate(error
-    ? `<h1>Anmeldung fehlgeschlagen</h1><p class="gate-sub wide">${esc(error)}</p>`
-    : `<h1>Anmeldung erfolgreich</h1><p class="gate-sub wide">Wechsle zurück zur Ablage. Geht es dort nicht von selbst weiter (z. B. am iPhone), kopiere diesen Code und füge ihn dort ein. Der Code ist nur wenige Minuten gültig und funktioniert nur auf dem Gerät, das die Anmeldung gestartet hat.</p>
-       <div class="reckey code">${esc(code)}</div><div class="row center"><button class="btn gold" id="cp">Code kopieren</button></div>`);
-  $("#cp")?.addEventListener("click", async () => { try { await navigator.clipboard.writeText(code); toast("Kopiert – jetzt zurück zur Ablage"); } catch { toast("Bitte den Code markieren und kopieren"); } });
-}
-
-/* Anmeldedialog: Link öffnet Microsoft in neuem Fenster; Code kommt automatisch oder wird eingefügt. */
-async function oneDriveLogin() {
+/* Anmeldedialog: Dropbox öffnet sich in neuem Fenster und zeigt nach der Freigabe einen Code. */
+async function dropboxLogin() {
   const url = await Sync.authUrl();
   S.picking = true;
   const code = await new Promise(resolve => {
     const o = document.createElement("div"); o.className = "overlay";
-    o.innerHTML = `<form class="dialog" role="dialog" aria-modal="true"><h2>Mit OneDrive verbinden</h2>
-      <p>1. Bei Microsoft mit deinem Konto anmelden und den Zugriff auf den App-Ordner erlauben.</p>
-      <a class="btn primary" href="${esc(url)}" target="_blank">${ico("cloud")} Bei Microsoft anmelden</a>
-      <p>2. Danach geht es hier automatisch weiter. Am iPhone kopierst du stattdessen den angezeigten Code und fügst ihn hier ein:</p>
-      <input name="c" placeholder="Code einfügen" autocomplete="off" spellcheck="false">
-      <div class="row end"><button type="button" class="btn ghost" data-x>Abbrechen</button><button class="btn primary">Weiter</button></div></form>`;
+    o.innerHTML = `<form class="dialog" role="dialog" aria-modal="true"><h2>Mit Dropbox verbinden</h2>
+      <p>1. Bei Dropbox anmelden und den Zugriff auf den App-Ordner erlauben.</p>
+      <a class="btn primary" href="${esc(url)}" target="_blank" rel="noopener">${ico("cloud")} Bei Dropbox anmelden</a>
+      <p>2. Dropbox zeigt dir danach einen Code. Kopiere ihn, komm hierher zurück und füge ihn ein:</p>
+      <input name="c" placeholder="Code einfügen" autocomplete="off" spellcheck="false" required>
+      <div class="row end"><button type="button" class="btn ghost" data-x>Abbrechen</button><button class="btn primary">Verbinden</button></div></form>`;
     document.body.append(o);
-    const f = $("form", o), done = v => { Sync.waitForCode.cancel?.(); o.remove(); resolve(v); };
-    Sync.waitForCode().then(done);
-    f.onsubmit = e => { e.preventDefault(); if (f.c.value.trim()) done(f.c.value.trim()); };
+    const f = $("form", o), done = v => { o.remove(); resolve(v); };
+    f.onsubmit = e => { e.preventDefault(); done(f.c.value.trim()); };
     $("[data-x]", o).onclick = () => done(null);
   });
   S.picking = false; activity();
   if (!code) return false;
-  toast("Verbinde mit OneDrive …");
+  toast("Verbinde mit Dropbox …");
   try { await Sync.exchangeCode(code); return true; }
-  catch (e) { await ask({ title: "Anmeldung fehlgeschlagen", text: esc(e.message), cancel: null }); return false; }
+  catch (e) { await ask({ title: "Anmeldung fehlgeschlagen", text: esc(e.message) + "<br>Bitte erneut verbinden – jeder Code gilt nur einmal.", cancel: null }); return false; }
 }
 
 async function askVaultPassword(rv, text) {
@@ -795,12 +785,12 @@ async function askVaultPassword(rv, text) {
   }
 }
 
-async function connectOneDrive() {
-  if (!(await oneDriveLogin())) return;
+async function connectDropbox() {
+  if (!(await dropboxLogin())) return;
   try {
     const r = await Sync.attach();
     if (r.status === "other") {
-      const key = await askVaultPassword(r.vault, "In deinem OneDrive liegt bereits eine Ablage von einem anderen Gerät. Gib <b>deren</b> Master-Passwort ein, um beide zusammenzuführen. Danach gilt dieses Passwort auch hier.");
+      const key = await askVaultPassword(r.vault, "In deiner Dropbox liegt bereits eine Ablage von einem anderen Gerät. Gib <b>deren</b> Master-Passwort ein, um beide zusammenzuführen. Danach gilt dieses Passwort auch hier.");
       if (!key) { await Sync.disconnect(); return renderSettings(); }
       await Sync.adoptRemoteVault(r.vault, key);
     }
@@ -810,18 +800,18 @@ async function connectOneDrive() {
   renderView();
 }
 
-async function reconnectOneDrive() {
-  if (await oneDriveLogin()) { await Sync.syncNow(); renderView(); toast("OneDrive wieder verbunden"); }
+async function reconnectDropbox() {
+  if (await dropboxLogin()) { await Sync.syncNow(); renderView(); toast("Dropbox wieder verbunden"); }
 }
 
-/* Neues Gerät: Tresor aus OneDrive übernehmen. */
+/* Neues Gerät: Tresor aus Dropbox übernehmen. */
 async function connectNewDevice() {
-  if (!(await oneDriveLogin())) return;
+  if (!(await dropboxLogin())) return;
   let rv;
   try { rv = await Sync.remoteVault(); } catch (e) { return ask({ title: "Fehler", text: esc(e.message), cancel: null }); }
   if (!rv) {
     await Sync.disconnect();
-    return ask({ title: "Keine Ablage gefunden", text: "In diesem OneDrive liegt noch keine Ablage. Lege zuerst hier einen Tresor an und verbinde ihn dann in den Einstellungen mit OneDrive.", cancel: null });
+    return ask({ title: "Keine Ablage gefunden", text: "In dieser Dropbox liegt noch keine Ablage. Lege zuerst hier einen Tresor an und verbinde ihn dann in den Einstellungen mit Dropbox.", cancel: null });
   }
   const key = await askVaultPassword(rv, "Master-Passwort deiner Ablage:");
   if (!key) { await Sync.disconnect(); return; }
