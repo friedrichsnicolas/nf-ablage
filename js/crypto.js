@@ -65,7 +65,7 @@ export async function createVault(password) {
   const raw = rand(32);
   const recoveryKey = makeRecoveryKey();
   const meta = {
-    format: "nf-ablage", v: 1, created: new Date().toISOString(),
+    format: "nf-ablage", v: 1, vid: newId(), created: new Date().toISOString(), changed: new Date().toISOString(),
     pw: await wrapRaw(raw, password, PW_ITER),
     rec: await wrapRaw(raw, normRecovery(recoveryKey), REC_ITER),
   };
@@ -86,7 +86,7 @@ export async function unlockWithRecovery(meta, recoveryKey) {
 }
 
 export async function rewrapPassword(meta, raw, newPassword) {
-  return { ...meta, pw: await wrapRaw(raw, newPassword, PW_ITER) };
+  return { ...meta, changed: new Date().toISOString(), pw: await wrapRaw(raw, newPassword, PW_ITER) };
 }
 
 export async function changePassword(meta, oldPassword, newPassword) {
@@ -98,7 +98,7 @@ export async function newRecoveryKey(meta, password) {
   const raw = await unwrapRaw(meta.pw, password);
   try {
     const recoveryKey = makeRecoveryKey();
-    return { meta: { ...meta, rec: await wrapRaw(raw, normRecovery(recoveryKey), REC_ITER) }, recoveryKey };
+    return { meta: { ...meta, changed: new Date().toISOString(), rec: await wrapRaw(raw, normRecovery(recoveryKey), REC_ITER) }, recoveryKey };
   } finally { raw.fill(0); }
 }
 

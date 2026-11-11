@@ -11,6 +11,16 @@ Private, verschlüsselte Dokumentenablage als installierbare Web-App (PWA). Kein
 - **Passwort und Wiederherstellungsschlüssel verloren = Daten verloren.** Es gibt keine Hintertür.
 - Dieses Repository enthält nur den Programmcode – **niemals Dokumente hier hochladen.**
 
+## Geräte-Abgleich über Dropbox
+Optional in *Einstellungen → Geräte-Abgleich*. Die App lädt nur bereits verschlüsselte Pakete in ihren
+Dropbox-App-Ordner (`Apps/<App-Name>`, Zugriffstyp „App folder“: kein Zugriff auf andere Dropbox-Dateien).
+Auf weiteren Geräten: *Ablage von Dropbox übernehmen* und mit demselben Master-Passwort entsperren.
+Bei gleichzeitiger Änderung desselben Dokuments gewinnt die jüngere Fassung.
+
+Einrichtung: in der [Dropbox App Console](https://www.dropbox.com/developers/apps) eine App mit
+„Scoped access“ und „App folder“ anlegen, unter *Permissions* `files.content.write` und `files.content.read`
+aktivieren und den *App key* in `js/config.js` eintragen. Anmeldung per OAuth-PKCE ohne Server.
+
 ## Geräte & Backup
 Die Daten liegen pro Gerät/Browser. Übertragung und Sicherung über *Einstellungen → Backup erstellen*: eine einzelne,
 weiterhin verschlüsselte `.nfablage`-Datei (z. B. in iCloud Drive oder auf USB-Stick). Auf dem neuen Gerät:
