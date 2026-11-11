@@ -11,6 +11,17 @@ Private, verschlüsselte Dokumentenablage als installierbare Web-App (PWA). Kein
 - **Passwort und Wiederherstellungsschlüssel verloren = Daten verloren.** Es gibt keine Hintertür.
 - Dieses Repository enthält nur den Programmcode – **niemals Dokumente hier hochladen.**
 
+## Geräte-Abgleich über OneDrive
+Optional in *Einstellungen → Geräte-Abgleich*. Die App lädt nur bereits verschlüsselte Pakete in den App-Ordner
+`Apps/NF-Ablage` (Berechtigung `Files.ReadWrite.AppFolder`, kein Zugriff auf andere OneDrive-Dateien).
+Auf weiteren Geräten: *Ablage von OneDrive übernehmen* und mit demselben Master-Passwort entsperren.
+Bei gleichzeitiger Änderung desselben Dokuments gewinnt die jüngere Fassung.
+
+Einrichtung: App im Microsoft-Entra-Portal registrieren (Kontotyp „Nur persönliche Microsoft-Konten“,
+Plattform „Single-Page-Anwendung“, Umleitungs-URI `https://friedrichsnicolas.github.io/nf-ablage/`) und die
+Anwendungs-ID in `js/config.js` eintragen. Microsoft begrenzt die Anmeldung bei Web-Apps auf 24 Stunden;
+danach genügt ein Tipp auf „Erneuern“.
+
 ## Geräte & Backup
 Die Daten liegen pro Gerät/Browser. Übertragung und Sicherung über *Einstellungen → Backup erstellen*: eine einzelne,
 weiterhin verschlüsselte `.nfablage`-Datei (z. B. in iCloud Drive oder auf USB-Stick). Auf dem neuen Gerät:

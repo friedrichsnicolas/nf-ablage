@@ -189,3 +189,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .print-key { font: 500 18pt/1.6 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .08em; border: 1.5pt solid #0E3A32; padding: .6cm; margin: 1cm 0; text-align: center; }
 }
 .tags .due { padding: .1rem .5rem; }
+
+/* ---- OneDrive-Abgleich ---- */
+.btn.od { width: 100%; max-width: 22rem; margin-top: 1rem; }
+.reckey.code { font-size: .8rem; letter-spacing: 0; word-break: break-all; max-height: 9rem; overflow: auto; text-align: left; }
+.icon-btn.sync { color: var(--muted); }
+.icon-btn.sync[data-s="ok"], .icon-btn.sync[data-s="idle"] { color: var(--green); }
+.icon-btn.sync[data-s="busy"] .ico { animation: pulse 1s ease-in-out infinite; color: var(--champ); }
+.icon-btn.sync[data-s="error"], .icon-btn.sync[data-s="login"] { color: var(--rust); }
+@keyframes pulse { 50% { opacity: .35; } }
+.dialog a.btn { justify-self: start; }

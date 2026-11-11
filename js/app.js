@@ -1,8 +1,9 @@
 /* NF · Dokumentenablage – private, clientseitig verschlüsselte Dokumentenverwaltung. */
 import * as C from "./crypto.js";
 import * as DB from "./db.js";
+import * as Sync from "./sync.js";
 
-const APP_VERSION = "1.0";
+const APP_VERSION = "1.1";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -32,6 +33,7 @@ const I = { // schlichte Linien-Icons
   camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
   shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  cloud: '<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5A3.75 3.75 0 0 1 17.5 18z"/>',
 };
 const ico = (n, cls = "ico") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
 
@@ -141,8 +143,10 @@ async function boot() {
     root.innerHTML = `<main class="gate"><h1>Nicht unterstützt</h1><p class="gate-sub">Dieser Browser bietet keine sichere Verschlüsselung (HTTPS erforderlich).</p></main>`;
     return;
   }
+  if (Sync.enabled() && Sync.handleCallback(renderCallback)) return;
   S.meta = await DB.getMeta("vault");
   S.prefs = { ...DEFAULT_PREFS, ...(await DB.getMeta("prefs")) };
+  await Sync.init(S, { onStatus: renderSyncStatus, onRemoteChange: () => { if (S.key && $("#view")) renderView(); } });
   S.meta ? renderLock() : renderWelcome();
 }
 
@@ -167,7 +171,9 @@ function renderWelcome() {
       <button class="btn gold">Tresor anlegen</button>
       <p class="msg" role="alert"></p>
     </form>
+    ${Sync.enabled() ? `<button class="btn ghost-light od" id="od">${ico("cloud")} Ablage von OneDrive übernehmen</button>` : ""}
     <button class="link" id="restore">Ich habe ein Backup – wiederherstellen</button>`);
+  $("#od")?.addEventListener("click", connectNewDevice);
   const f = $("#f"), msg = $(".msg", f), meter = $(".meter", f);
   const words = ["", "schwach", "mittel", "gut", "sehr gut"];
   f.pw.oninput = () => {
@@ -206,7 +212,7 @@ function renderRecoveryKey(recoveryKey, first) {
   $("#cp").onclick = async () => { try { await navigator.clipboard.writeText(recoveryKey); toast("Kopiert – bitte nicht in Notizen-Apps speichern"); } catch { toast("Kopieren nicht möglich"); } };
   $("#f").onsubmit = async e => {
     e.preventDefault(); $("#print").innerHTML = "";
-    if (first) { await loadDocs(); renderMain(); } else { renderMain(); S.view = "einstellungen"; renderView(); }
+    if (first) await afterUnlock(); else { renderMain(); S.view = "einstellungen"; renderView(); }
   };
 }
 
@@ -222,6 +228,10 @@ function renderLock() {
     <button class="link" id="rec">Passwort vergessen? Wiederherstellungsschlüssel verwenden</button>`);
   const f = $("#f"), msg = $(".msg", f), btn = $("button.btn", f);
   setTimeout(() => f.pw.focus(), 50);
+  // Passwort auf anderem Gerät geändert? Neueren Tresor-Schlüssel aus OneDrive holen (nur verschlüsselt).
+  if (Sync.connected() && navigator.onLine) Sync.remoteVault().then(async rv => {
+    if (rv?.vid && rv.vid === S.meta.vid && (rv.changed || "") > (S.meta.changed || "")) { S.meta = rv; await DB.setMeta("vault", rv); }
+  }).catch(() => {});
   f.onsubmit = async e => {
     e.preventDefault(); msg.textContent = "";
     const wait = Math.ceil((S.prefs.failUntil - Date.now()) / 1000);
@@ -230,7 +240,7 @@ function renderLock() {
     try {
       S.key = await C.unlockWithPassword(S.meta, f.pw.value);
       f.pw.value = ""; S.prefs.fails = 0; S.prefs.failUntil = 0; await savePrefs();
-      await loadDocs(); renderMain();
+      await afterUnlock();
     } catch {
       busy(btn, false); f.pw.select();
       S.prefs.fails++;
@@ -276,11 +286,20 @@ function renderNewPassword(key, raw) {
     S.meta = await C.rewrapPassword(S.meta, raw, f.pw.value); raw.fill(0);
     await DB.setMeta("vault", S.meta);
     S.key = key; S.prefs.fails = 0; S.prefs.failUntil = 0; await savePrefs();
-    await loadDocs(); renderMain(); toast("Neues Passwort gespeichert");
+    Sync.pushVault().catch(() => {});
+    await afterUnlock(); toast("Neues Passwort gespeichert");
   };
 }
 
 /* ---------------- Daten ---------------- */
+async function afterUnlock() {
+  await loadDocs(); renderMain();
+  Sync.syncNow();
+}
+setInterval(() => { if (S.key && !document.hidden) Sync.syncNow(); }, 90e3);
+addEventListener("online", () => S.key && Sync.syncNow());
+document.addEventListener("visibilitychange", () => { if (S.key && !document.hidden) Sync.schedule(500); });
+
 async function loadDocs() {
   const recs = await DB.all("docs");
   S.docs = (await Promise.all(recs.map(async r => {
@@ -305,15 +324,18 @@ async function saveDoc(doc, newFiles, removedFileIds) {
   await DB.write({ docs: [rec], files, deleteFiles: removedFileIds });
   const i = S.docs.findIndex(d => d.id === id);
   i >= 0 ? (S.docs[i] = doc) : S.docs.push(doc);
+  await Sync.markRemovedFiles(removedFileIds);
+  await Sync.markDirty(id);
 }
 
 async function deleteDoc(doc) {
   await DB.write({ deleteDocs: [doc.id], deleteFiles: doc.files.map(f => f.id) });
   S.docs = S.docs.filter(d => d.id !== doc.id);
+  await Sync.markDeleted(doc);
 }
 
 async function fileBlob(f) {
-  const rec = await DB.get("files", f.id);
+  const rec = (await DB.get("files", f.id)) || (await Sync.fetchFile(f.id));
   if (!rec) throw new Error("Datei fehlt");
   return new Blob([await C.decryptBytes(S.key, rec)], { type: f.type });
 }
@@ -324,6 +346,7 @@ function renderMain() {
     <header class="top">
       <img class="wordmark" src="assets/img/NF_Wortbildmarke_quer_gruen.svg" alt="Nicolas Friedrichs">
       <span class="top-title">Dokumentenablage</span>
+      <button class="icon-btn sync" id="syncbtn" hidden>${ico("cloud")}</button>
       <button class="icon-btn" id="lockbtn" title="Jetzt sperren" aria-label="Jetzt sperren">${ico("lock")}</button>
     </header>
     <div id="banner"></div>
@@ -335,6 +358,12 @@ function renderMain() {
       <button data-v="einstellungen">${ico("gear")}<span>Einstellungen</span></button>
     </nav>`;
   $("#lockbtn").onclick = lock;
+  $("#syncbtn").onclick = () => {
+    const i = Sync.info();
+    if (i.state === "login") return reconnectOneDrive();
+    Sync.syncNow(); if (i.text && i.state === "error") toast(i.text);
+  };
+  renderSyncStatus(Sync.info());
   $("#add").onclick = () => openEditor(null);
   $$(".tabs button").forEach(b => b.onclick = () => { S.view = b.dataset.v; renderView(); });
   renderView();
@@ -342,8 +371,13 @@ function renderMain() {
 
 function renderBanner() {
   const b = $("#banner"); if (!b) return;
+  if (Sync.info().needsLogin) {
+    b.innerHTML = `<div class="banner">${ico("cloud")}<span>Die OneDrive-Anmeldung ist abgelaufen. Bitte kurz erneuern, damit deine Geräte weiter abgleichen.</span><button class="btn small" id="rc">Erneuern</button></div>`;
+    $("#rc").onclick = reconnectOneDrive; return;
+  }
   const last = S.prefs.lastBackup, days = last ? Math.floor((Date.now() - new Date(last)) / 864e5) : null;
-  if (S.docs.length && (days === null || days > 30)) {
+  const synced = Sync.connected() && Sync.info().lastSync;
+  if (S.docs.length && !synced && (days === null || days > 30)) {
     b.innerHTML = `<div class="banner">${ico("shield")}<span>${days === null ? "Noch kein Backup erstellt." : `Letztes Backup vor ${days} Tagen.`} Ein verschlüsseltes Backup schützt vor Geräteverlust.</span><button class="btn small" id="bk">Backup</button></div>`;
     $("#bk").onclick = exportBackup;
   } else b.innerHTML = "";
@@ -568,7 +602,16 @@ async function renderSettings() {
   const est = await navigator.storage?.estimate?.().catch(() => null);
   const persisted = await navigator.storage?.persisted?.().catch(() => false);
   const nFiles = S.docs.reduce((a, d) => a + d.files.length, 0);
-  v.innerHTML = `
+  const si = Sync.info();
+  const syncPanel = !Sync.enabled() ? "" : `<section class="panel"><h2>Geräte-Abgleich (OneDrive)</h2>
+      ${Sync.connected() ? `<p>Verbunden${si.account ? ` mit dem OneDrive von <b>${esc(si.account)}</b>` : ""}. ${si.lastSync ? `Zuletzt abgeglichen: ${new Date(si.lastSync).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}.` : ""}</p>
+        ${si.state === "error" ? `<p class="hint">Letzter Fehler: ${esc(si.text)}</p>` : ""}
+        <div class="row wrap">${si.needsLogin ? `<button class="btn primary" id="odre">${ico("cloud")} Anmeldung erneuern</button>` : `<button class="btn primary" id="odsync">${ico("cloud")} Jetzt abgleichen</button>`}
+        <button class="btn ghost" id="oddis">Verbindung trennen</button></div>`
+      : `<p>Gleicht deine Ablage über einen eigenen Ordner <b>Apps/NF-Ablage</b> in deinem OneDrive zwischen deinen Geräten ab. Dort liegen nur verschlüsselte Pakete, Microsoft kann nichts lesen. Die App erhält keinen Zugriff auf deine übrigen OneDrive-Dateien.</p>
+        <button class="btn primary" id="odcon">${ico("cloud")} Mit OneDrive verbinden</button>`}
+    </section>`;
+  v.innerHTML = syncPanel + `
     <section class="panel"><h2>Backup</h2>
       <p>Das Backup ist eine einzelne, <b>verschlüsselte</b> Datei. Lege sie z. B. in iCloud Drive, OneDrive oder auf einen USB-Stick. Ohne dein Passwort ist sie wertlos. So überträgst du die Ablage auch auf ein anderes Gerät.</p>
       <p class="hint">${S.prefs.lastBackup ? `Letztes Backup: ${fmtDate(S.prefs.lastBackup)}` : "Noch kein Backup erstellt."}</p>
@@ -588,16 +631,22 @@ async function renderSettings() {
       <ul class="plain">
         <li>Dateien und Angaben werden mit <b>AES-256-GCM</b> verschlüsselt, bevor sie gespeichert werden.</li>
         <li>Der Schlüssel wird aus deinem Master-Passwort abgeleitet (PBKDF2, 600.000 Runden) und existiert nur, solange die App entsperrt ist.</li>
-        <li>Die App hat keinen Server und sendet nichts ins Internet. Eine strenge Sicherheitsrichtlinie blockiert alle fremden Verbindungen.</li>
+        <li>Die App hat keinen eigenen Server. Verbindungen sind nur zu Microsoft (OneDrive-Abgleich, falls eingeschaltet) erlaubt, alle anderen blockiert eine strenge Sicherheitsrichtlinie. Zu OneDrive gelangen nur verschlüsselte Pakete.</li>
         <li>Wer dein Gerät entsperrt in den Händen hält, während die Ablage offen ist, sieht die Dokumente. Darum sperrt sie sich automatisch.</li>
       </ul>
     </section>
     <section class="panel danger-zone"><h2>Tresor löschen</h2>
-      <p>Löscht alle Dokumente auf diesem Gerät unwiderruflich. Backups bleiben unberührt.</p>
+      <p>Löscht alle Dokumente auf diesem Gerät unwiderruflich. Backups und die Kopie in OneDrive bleiben unberührt.</p>
       <button class="btn danger" id="wipe">${ico("trash")} Alles löschen</button>
     </section>
     <p class="hint center">NF · Dokumentenablage ${APP_VERSION}</p>`;
   $("#exp").onclick = exportBackup;
+  $("#odcon")?.addEventListener("click", connectOneDrive);
+  $("#odre")?.addEventListener("click", reconnectOneDrive);
+  $("#odsync")?.addEventListener("click", async () => { await Sync.syncNow(); renderSettings(); });
+  $("#oddis")?.addEventListener("click", async () => {
+    if (await ask({ title: "Verbindung trennen?", text: "Dieses Gerät gleicht dann nicht mehr ab. Die Dokumente bleiben hier und in OneDrive erhalten.", ok: "Trennen" })) { await Sync.disconnect(); renderSettings(); renderSyncStatus(Sync.info()); }
+  });
   const imp = $("#imp"); imp.onclick = () => { S.picking = true; };
   imp.onchange = () => { S.picking = false; if (imp.files[0]) importBackup(imp.files[0]); imp.value = ""; };
   $("#lockMin").onchange = async e => { S.prefs.lockMin = +e.target.value; await savePrefs(); toast("Gespeichert"); };
@@ -607,14 +656,14 @@ async function renderSettings() {
     if (C.strength(nw) < 2 || nw.length < 10) return ask({ title: "Zu schwach", text: "Bitte ein längeres Passwort wählen.", cancel: null });
     const nw2 = await ask({ title: "Neues Passwort wiederholen", input: "password", ok: "Speichern" }); if (nw2 === null) return;
     if (nw !== nw2) return ask({ title: "Stimmt nicht überein", text: "Die Passwörter waren verschieden.", cancel: null });
-    try { S.meta = await C.changePassword(S.meta, old, nw); await DB.setMeta("vault", S.meta); toast("Passwort geändert"); }
+    try { S.meta = await C.changePassword(S.meta, old, nw); await DB.setMeta("vault", S.meta); Sync.pushVault().catch(() => {}); toast("Passwort geändert" + (Sync.connected() ? " – gilt auch auf deinen anderen Geräten" : "")); }
     catch { ask({ title: "Falsches Passwort", text: "Das aktuelle Passwort war nicht korrekt.", cancel: null }); }
   };
   $("#newrk").onclick = async () => {
     const pw = await ask({ title: "Neuer Wiederherstellungsschlüssel", text: "Der alte Schlüssel wird ungültig (gilt aber weiterhin für ältere Backups). Bitte Master-Passwort eingeben:", input: "password", ok: "Erzeugen" });
     if (!pw) return;
     try {
-      const r = await C.newRecoveryKey(S.meta, pw); S.meta = r.meta; await DB.setMeta("vault", S.meta);
+      const r = await C.newRecoveryKey(S.meta, pw); S.meta = r.meta; await DB.setMeta("vault", S.meta); Sync.pushVault().catch(() => {});
       renderRecoveryKey(r.recoveryKey, false);
     } catch { ask({ title: "Falsches Passwort", cancel: null }); }
   };
@@ -674,6 +723,7 @@ async function importBackup(file) {
     const { id, ...body } = doc;
     await DB.write({ docs: [await C.encryptJSON(S.key, body, id)], files });
     S.docs.push(doc); added++;
+    await Sync.markDirty(id);
   }
   renderView();
   ask({ title: "Import abgeschlossen", text: `${plural(added, "Dokument", "Dokumente")} übernommen${data.docs.length - added ? `, ${data.docs.length - added} bereits vorhanden` : ""}.`, cancel: null });
@@ -692,6 +742,93 @@ function restoreBackupAtSetup() {
     await loadDocs(); renderMain(); toast("Backup wiederhergestellt");
   };
   inp.click();
+}
+
+/* ---------------- OneDrive ---------------- */
+function renderSyncStatus(i) {
+  const b = $("#syncbtn"); if (!b) return;
+  b.hidden = !Sync.connected();
+  b.dataset.s = i.state;
+  const t = { busy: "Gleiche ab …", ok: "Abgeglichen", idle: "OneDrive verbunden", login: "OneDrive-Anmeldung erneuern", error: "Abgleich fehlgeschlagen – tippen für Details", offline: "Offline – gleicht später ab" }[i.state] || "";
+  b.title = t; b.setAttribute("aria-label", t);
+  renderBanner();
+}
+
+function renderCallback({ code, error }) {
+  gate(error
+    ? `<h1>Anmeldung fehlgeschlagen</h1><p class="gate-sub wide">${esc(error)}</p>`
+    : `<h1>Anmeldung erfolgreich</h1><p class="gate-sub wide">Wechsle zurück zur Ablage. Geht es dort nicht von selbst weiter (z. B. am iPhone), kopiere diesen Code und füge ihn dort ein. Der Code ist nur wenige Minuten gültig und funktioniert nur auf dem Gerät, das die Anmeldung gestartet hat.</p>
+       <div class="reckey code">${esc(code)}</div><div class="row center"><button class="btn gold" id="cp">Code kopieren</button></div>`);
+  $("#cp")?.addEventListener("click", async () => { try { await navigator.clipboard.writeText(code); toast("Kopiert – jetzt zurück zur Ablage"); } catch { toast("Bitte den Code markieren und kopieren"); } });
+}
+
+/* Anmeldedialog: Link öffnet Microsoft in neuem Fenster; Code kommt automatisch oder wird eingefügt. */
+async function oneDriveLogin() {
+  const url = await Sync.authUrl();
+  S.picking = true;
+  const code = await new Promise(resolve => {
+    const o = document.createElement("div"); o.className = "overlay";
+    o.innerHTML = `<form class="dialog" role="dialog" aria-modal="true"><h2>Mit OneDrive verbinden</h2>
+      <p>1. Bei Microsoft mit deinem Konto anmelden und den Zugriff auf den App-Ordner erlauben.</p>
+      <a class="btn primary" href="${esc(url)}" target="_blank">${ico("cloud")} Bei Microsoft anmelden</a>
+      <p>2. Danach geht es hier automatisch weiter. Am iPhone kopierst du stattdessen den angezeigten Code und fügst ihn hier ein:</p>
+      <input name="c" placeholder="Code einfügen" autocomplete="off" spellcheck="false">
+      <div class="row end"><button type="button" class="btn ghost" data-x>Abbrechen</button><button class="btn primary">Weiter</button></div></form>`;
+    document.body.append(o);
+    const f = $("form", o), done = v => { Sync.waitForCode.cancel?.(); o.remove(); resolve(v); };
+    Sync.waitForCode().then(done);
+    f.onsubmit = e => { e.preventDefault(); if (f.c.value.trim()) done(f.c.value.trim()); };
+    $("[data-x]", o).onclick = () => done(null);
+  });
+  S.picking = false; activity();
+  if (!code) return false;
+  toast("Verbinde mit OneDrive …");
+  try { await Sync.exchangeCode(code); return true; }
+  catch (e) { await ask({ title: "Anmeldung fehlgeschlagen", text: esc(e.message), cancel: null }); return false; }
+}
+
+async function askVaultPassword(rv, text) {
+  for (;;) {
+    const pw = await ask({ title: "Master-Passwort", text, input: "password", ok: "Entsperren" });
+    if (pw === null) return null;
+    try { return await C.unlockWithPassword(rv, pw); } catch { toast("Passwort falsch"); }
+  }
+}
+
+async function connectOneDrive() {
+  if (!(await oneDriveLogin())) return;
+  try {
+    const r = await Sync.attach();
+    if (r.status === "other") {
+      const key = await askVaultPassword(r.vault, "In deinem OneDrive liegt bereits eine Ablage von einem anderen Gerät. Gib <b>deren</b> Master-Passwort ein, um beide zusammenzuführen. Danach gilt dieses Passwort auch hier.");
+      if (!key) { await Sync.disconnect(); return renderSettings(); }
+      await Sync.adoptRemoteVault(r.vault, key);
+    }
+    await Sync.syncNow();
+    toast(r.status === "uploaded" ? "Verbunden – Ablage wird hochgeladen" : "Verbunden und abgeglichen");
+  } catch (e) { ask({ title: "Verbinden fehlgeschlagen", text: esc(e.message), cancel: null }); }
+  renderView();
+}
+
+async function reconnectOneDrive() {
+  if (await oneDriveLogin()) { await Sync.syncNow(); renderView(); toast("OneDrive wieder verbunden"); }
+}
+
+/* Neues Gerät: Tresor aus OneDrive übernehmen. */
+async function connectNewDevice() {
+  if (!(await oneDriveLogin())) return;
+  let rv;
+  try { rv = await Sync.remoteVault(); } catch (e) { return ask({ title: "Fehler", text: esc(e.message), cancel: null }); }
+  if (!rv) {
+    await Sync.disconnect();
+    return ask({ title: "Keine Ablage gefunden", text: "In diesem OneDrive liegt noch keine Ablage. Lege zuerst hier einen Tresor an und verbinde ihn dann in den Einstellungen mit OneDrive.", cancel: null });
+  }
+  const key = await askVaultPassword(rv, "Master-Passwort deiner Ablage:");
+  if (!key) { await Sync.disconnect(); return; }
+  await DB.setMeta("vault", rv); S.meta = rv; S.key = key;
+  navigator.storage?.persist?.();
+  await afterUnlock();
+  toast("Ablage wird geladen …");
 }
 
 boot();
