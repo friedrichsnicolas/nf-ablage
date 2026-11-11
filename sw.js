@@ -1,6 +1,6 @@
 /* Offline-Cache: enthält ausschließlich die App-Dateien, niemals Dokumente.
    Bei Änderungen VERSION erhöhen. */
-const VERSION = "nf-ablage-v5";
+const VERSION = "nf-ablage-v6";
 const FILES = [
   "./", "index.html", "app.css", "js/app.js", "js/crypto.js", "js/db.js", "js/sync.js", "js/config.js", "manifest.webmanifest",
   "assets/fonts/Inter-Regular.ttf", "assets/fonts/Inter-Medium.ttf",
@@ -10,7 +10,7 @@ const FILES = [
 ];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES.map(f => new Request(f, { cache: "reload" })))).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", e => {
   e.waitUntil(caches.keys()
@@ -21,7 +21,7 @@ self.addEventListener("activate", e => {
 self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
-  e.respondWith(fetch(e.request).then(res => {
+  e.respondWith(fetch(e.request, { cache: "no-cache" }).then(res => {
     if (res.ok && res.type === "basic") {
       const copy = res.clone();
       caches.open(VERSION).then(c => c.put(e.request, copy));

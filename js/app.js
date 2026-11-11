@@ -3,19 +3,48 @@ import * as C from "./crypto.js";
 import * as DB from "./db.js";
 import * as Sync from "./sync.js";
 
-const APP_VERSION = "1.1";
+const APP_VERSION = "1.2";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const root = $("#app");
 
-const CATS = [
-  ["ausweise", "Ausweise & Urkunden"], ["versicherung", "Versicherungen"], ["steuern", "Steuern & Finanzen"],
-  ["vertraege", "Verträge & Abos"], ["wohnen", "Wohnen & Haus"], ["auto", "Auto & Mobilität"],
-  ["gesundheit", "Gesundheit"], ["arbeit", "Arbeit & Bildung"], ["rechnungen", "Rechnungen & Garantien"],
-  ["sonstiges", "Sonstiges"],
+/* Ablagestruktur: Hauptordner mit Unterordnern. Gespeichert wird "haupt/unter". */
+const TREE = [
+  ["identitaet", "Identität & Urkunden", [["ausweise", "Ausweise"], ["urkunden", "Urkunden"], ["nachweise", "Nachweise & Bescheinigungen"]]],
+  ["finanzen", "Finanzen & Steuern", [["bank", "Bank & Konten"], ["steuern", "Steuern"], ["anlagen", "Altersvorsorge & Anlagen"], ["kredite", "Kredite & Finanzierung"]]],
+  ["versicherungen", "Versicherungen", [["kranken", "Kranken & Pflege"], ["haftpflicht", "Haftpflicht & Hausrat"], ["kfz", "Kfz"], ["leben", "Leben & Berufsunfähigkeit"], ["weitere", "Rechtsschutz & weitere"]]],
+  ["wohnen", "Wohnen", [["miete", "Miete & Eigentum"], ["energie", "Nebenkosten & Energie"], ["internet", "Telefon & Internet"], ["handwerker", "Handwerker & Reparaturen"]]],
+  ["mobilitaet", "Auto & Mobilität", [["fahrzeug", "Fahrzeugpapiere"], ["wartung", "Wartung & TÜV"], ["tickets", "Tickets & Abos"]]],
+  ["gesundheit", "Gesundheit", [["befunde", "Befunde & Arztbriefe"], ["impfungen", "Impfungen"], ["rezepte", "Rezepte & Rechnungen"]]],
+  ["beruf", "Beruf & Bildung", [["vertrag", "Arbeitsvertrag"], ["gehalt", "Gehaltsabrechnungen"], ["zeugnisse", "Zeugnisse & Zertifikate"], ["weiterbildung", "Weiterbildung"]]],
+  ["vertraege", "Verträge & Mitgliedschaften", [["abos", "Abos & Streaming"], ["vereine", "Vereine & Mitgliedschaften"], ["sonstige", "Sonstige Verträge"]]],
+  ["kauf", "Kaufbelege & Garantien", [["elektronik", "Elektronik"], ["haushalt", "Haushalt & Möbel"], ["sonstige", "Sonstige Käufe"]]],
+  ["recht", "Vorsorge & Recht", [["vollmachten", "Vollmachten & Verfügungen"], ["rente", "Rente & Behörden"], ["rechtliches", "Rechtliches"]]],
+  ["sonstiges", "Sonstiges", [["allgemein", "Allgemein"]]],
 ];
-const catName = id => (CATS.find(c => c[0] === id) || CATS.at(-1))[1];
+const LEGACY = { ausweise: "identitaet/ausweise", versicherung: "versicherungen/weitere", steuern: "finanzen/steuern", vertraege: "vertraege/sonstige",
+  wohnen: "wohnen/miete", auto: "mobilitaet/fahrzeug", gesundheit: "gesundheit/befunde", arbeit: "beruf/vertrag", rechnungen: "kauf/sonstige", sonstiges: "sonstiges/allgemein" };
+const catKey = d => { const c = d.category || ""; if (c.includes("/")) return c; return LEGACY[c] || "sonstiges/allgemein"; };
+const mainOf = d => catKey(d).split("/")[0];
+const subOf = d => catKey(d).split("/")[1];
+const mainEntry = id => TREE.find(t => t[0] === id) || TREE.at(-1);
+const subName = (m, sub) => (mainEntry(m)[2].find(x => x[0] === sub) || [, ""])[1];
+const catName = d => `${mainEntry(mainOf(d))[1]} › ${subName(mainOf(d), subOf(d))}`;
+
+/* Checkliste: vorbereitete Einträge für die wichtigsten persönlichen Dokumente. */
+const ID_CHECKLIST = [
+  ["Personalausweis", "identitaet/ausweise", "Vorder- und Rückseite fotografieren. Ablaufdatum als Frist eintragen."],
+  ["Reisepass", "identitaet/ausweise", "Bildseite fotografieren. Ablaufdatum als Frist eintragen."],
+  ["Führerschein", "identitaet/ausweise", "Vorder- und Rückseite fotografieren. Kartenführerscheine sind 15 Jahre gültig – Ablaufdatum als Frist eintragen."],
+  ["Geburtsurkunde", "identitaet/urkunden", "Am besten als PDF einscannen."],
+  ["Meldebescheinigung", "identitaet/nachweise", "Aktuelle Bescheinigung des Bürgerbüros."],
+  ["Sozialversicherungsausweis", "identitaet/nachweise", "Enthält die Rentenversicherungsnummer – auch in die Notizen schreiben."],
+  ["Steuer-Identifikationsnummer", "finanzen/steuern", "Schreiben des Bundeszentralamts für Steuern oder die Nummer in die Notizen."],
+  ["Krankenversicherungskarte", "versicherungen/kranken", "Vorder- und Rückseite fotografieren. Gültigkeit als Frist eintragen."],
+  ["Impfpass", "gesundheit/impfungen", "Alle beschriebenen Seiten fotografieren."],
+  ["Schul- und Abschlusszeugnisse", "beruf/zeugnisse", "Abitur, Ausbildung, Studium – je Zeugnis eine Datei."],
+];
 
 const I = { // schlichte Linien-Icons
   lock: '<path d="M7 11V8a5 5 0 0 1 10 0v3"/><rect x="4.5" y="11" width="15" height="10" rx="2"/>',
@@ -40,7 +69,7 @@ const ico = (n, cls = "ico") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hi
 /* ---------------- Zustand ---------------- */
 const S = {
   key: null, meta: null, prefs: {}, docs: [],
-  view: "ablage", cat: "alle", q: "", sort: "neu",
+  view: "ablage", cat: "alle", sub: "alle", todo: false, q: "", sort: "neu",
   urls: [], lastActive: Date.now(), hiddenAt: 0, picking: false,
 };
 const DEFAULT_PREFS = { lockMin: 5, lastBackup: null, fails: 0, failUntil: 0 };
@@ -316,6 +345,7 @@ async function saveDoc(doc, newFiles, removedFileIds) {
     if (!doc.thumb && f.blob.type.startsWith("image/")) doc.thumb = await makeThumb(f.blob);
   }
   doc.files = doc.files.filter(x => !removedFileIds.includes(x.id));
+  if (doc.files.length) delete doc.todo;
   if (removedFileIds.length && doc.thumb && !doc.files.some(x => x.type.startsWith("image/"))) doc.thumb = null;
   doc.updated = new Date().toISOString();
   const { id, ...body } = doc;
@@ -395,10 +425,10 @@ function renderView() {
 function card(d) {
   const due = dueInfo(d);
   const thumb = d.thumb ? `<img src="${d.thumb}" alt="">` : ico(d.files.length ? "file" : "note", "ico big");
-  const meta = [catName(d.category), d.docDate && fmtDate(d.docDate), d.files.length && plural(d.files.length, "Datei", "Dateien")].filter(Boolean).join(" · ");
+  const meta = [catName(d), d.docDate && fmtDate(d.docDate), d.files.length && plural(d.files.length, "Datei", "Dateien")].filter(Boolean).join(" · ");
   return `<li><button class="card" data-id="${d.id}"><span class="thumb">${thumb}</span>
     <span class="card-body"><span class="card-title">${esc(d.title)}</span><span class="card-meta">${esc(meta)}</span>
-    ${due || d.tags?.length ? `<span class="tags">${due ? `<span class="due ${due.cls}">${esc(due.label)}</span>` : ""}${(d.tags || []).map(t => `<i>${esc(t)}</i>`).join("")}</span>` : ""}</span></button></li>`;
+    ${due || d.todo || d.tags?.length ? `<span class="tags">${d.todo ? `<span class="due todo">Datei fehlt</span>` : ""}${due ? `<span class="due ${due.cls}">${esc(due.label)}</span>` : ""}${(d.tags || []).map(t => `<i>${esc(t)}</i>`).join("")}</span>` : ""}</span></button></li>`;
 }
 const bindCards = el => $$(".card", el).forEach(c => c.onclick = () => openDetail(S.docs.find(d => d.id === c.dataset.id)));
 
@@ -406,33 +436,75 @@ function renderAblage() {
   const v = $("#view");
   v.innerHTML = `<div class="searchbar">${ico("search")}<input type="search" id="q" placeholder="Suchen …" value="${esc(S.q)}" aria-label="Suchen">
       <select id="sort" aria-label="Sortierung"><option value="neu">Neueste</option><option value="datum">Datum</option><option value="titel">A–Z</option></select></div>
-    <div class="chips" id="chips"></div><ul class="list" id="list"></ul>`;
+    <div id="nav"></div><ul class="list" id="list"></ul>`;
   $("#sort").value = S.sort;
   $("#q").oninput = e => { S.q = e.target.value; renderList(); };
   $("#sort").onchange = e => { S.sort = e.target.value; renderList(); };
   renderList();
 }
 
+const SORTERS = {
+  neu: (a, b) => (b.updated || "").localeCompare(a.updated || ""),
+  datum: (a, b) => (b.docDate || "").localeCompare(a.docDate || ""),
+  titel: (a, b) => a.title.localeCompare(b.title, "de"),
+};
+
 function renderList() {
   const words = S.q.toLowerCase().split(/\s+/).filter(Boolean);
-  const hay = d => [d.title, d.notes, catName(d.category), ...(d.tags || []), ...d.files.map(f => f.name), fmtDate(d.docDate)].join(" ").toLowerCase();
-  const matching = S.docs.filter(d => words.every(w => hay(d).includes(w)));
-  const counts = {}; matching.forEach(d => counts[d.category] = (counts[d.category] || 0) + 1);
-  if (S.cat !== "alle" && !counts[S.cat]) S.cat = "alle";
-  $("#chips").innerHTML = [["alle", "Alle", matching.length], ...CATS.filter(c => counts[c[0]]).map(c => [c[0], c[1], counts[c[0]]])]
-    .map(([id, n, k]) => `<button class="chip ${S.cat === id ? "on" : ""}" data-c="${id}">${esc(n)} <small>${k}</small></button>`).join("");
-  $$("#chips .chip").forEach(c => c.onclick = () => { S.cat = c.dataset.c; renderList(); });
-  const list = matching.filter(d => S.cat === "alle" || d.category === S.cat);
-  const sorters = {
-    neu: (a, b) => (b.updated || "").localeCompare(a.updated || ""),
-    datum: (a, b) => (b.docDate || "").localeCompare(a.docDate || ""),
-    titel: (a, b) => a.title.localeCompare(b.title, "de"),
-  };
-  list.sort(sorters[S.sort]);
-  const el = $("#list");
-  if (!S.docs.length) el.innerHTML = `<li class="empty">${ico("folder", "ico huge")}<h2>Noch leer</h2><p>Lege dein erstes Dokument ab, zum Beispiel deinen Personalausweis, die Kfz-Versicherung oder den letzten Steuerbescheid.</p></li>`;
-  else if (!list.length) el.innerHTML = `<li class="empty"><p>Keine Treffer für „${esc(S.q)}“.</p></li>`;
+  const hay = d => [d.title, d.notes, catName(d), ...(d.tags || []), ...d.files.map(f => f.name), fmtDate(d.docDate)].join(" ").toLowerCase();
+  const nav = $("#nav"), el = $("#list");
+  const todos = S.docs.filter(d => d.todo);
+  if (S.todo && !todos.length) S.todo = false;
+  let list, head = "";
+
+  if (words.length) { // Suche: flache Trefferliste über alle Ordner
+    list = S.docs.filter(d => words.every(w => hay(d).includes(w)));
+    nav.innerHTML = `<p class="lead">${plural(list.length, "Treffer", "Treffer")} in allen Ordnern</p>`;
+  } else if (S.todo) {
+    list = todos;
+    nav.innerHTML = `<div class="crumbs"><button class="chip" data-home>‹ Alle Ordner</button><span>Noch offen</span></div>
+      <p class="lead">Vorbereitete Einträge ohne Datei. Tippe einen an, dann auf ${ico("edit")} und füge Foto oder PDF hinzu.</p>`;
+  } else if (S.cat === "alle") { // Startseite: Ordnerübersicht + zuletzt geändert
+    const count = id => S.docs.filter(d => mainOf(d) === id).length;
+    nav.innerHTML = `${todos.length ? `<button class="todo-bar" data-todo>${ico("note")}<span><b>${plural(todos.length, "Dokument fehlt", "Dokumente fehlen")} noch</b> aus deiner Checkliste</span><span>›</span></button>` : ""}
+      <div class="folders">${TREE.map(([id, name]) => `<button class="folder ${count(id) ? "" : "empty-f"}" data-c="${id}">${ico("folder")}<span>${esc(name)}</span><small>${count(id)}</small></button>`).join("")}</div>
+      ${S.docs.length ? `<h2 class="sec">Zuletzt geändert</h2>` : ""}`;
+    list = [...S.docs].sort(SORTERS.neu).slice(0, 8);
+  } else { // In einem Ordner: Unterordner als Chips
+    const [, name, subs] = mainEntry(S.cat);
+    const inMain = S.docs.filter(d => mainOf(d) === S.cat);
+    const cnt = sub => inMain.filter(d => subOf(d) === sub).length;
+    nav.innerHTML = `<div class="crumbs"><button class="chip" data-home>‹ Alle Ordner</button><span>${esc(name)}</span></div>
+      <div class="chips">${[["alle", "Alle", inMain.length], ...subs.map(([id, n]) => [id, n, cnt(id)])]
+        .map(([id, n, k]) => `<button class="chip ${S.sub === id ? "on" : ""}" data-s="${id}">${esc(n)} <small>${k}</small></button>`).join("")}</div>`;
+    list = inMain.filter(d => S.sub === "alle" || subOf(d) === S.sub);
+  }
+  if (!(S.cat === "alle" && !words.length && !S.todo)) list.sort(SORTERS[S.sort]);
+
+  $$("[data-c]", nav).forEach(b => b.onclick = () => { S.cat = b.dataset.c; S.sub = "alle"; renderList(); window.scrollTo(0, 0); });
+  $$("[data-s]", nav).forEach(b => b.onclick = () => { S.sub = b.dataset.s; renderList(); });
+  $$("[data-home]", nav).forEach(b => b.onclick = () => { S.cat = "alle"; S.sub = "alle"; S.todo = false; renderList(); });
+  $$("[data-todo]", nav).forEach(b => b.onclick = () => { S.todo = true; renderList(); window.scrollTo(0, 0); });
+
+  if (!S.docs.length) {
+    el.innerHTML = `<li class="empty"><h2>Noch leer</h2><p>Lege dein erstes Dokument ab – oder starte mit der Checkliste für Ausweise, Urkunden und Nachweise.</p>
+      <button class="btn primary" id="seed">${ico("note")} Checkliste Ausweisdokumente anlegen</button></li>`;
+    $("#seed").onclick = seedChecklist;
+  } else if (!list.length) el.innerHTML = `<li class="empty"><p>${words.length ? `Keine Treffer für „${esc(S.q)}“.` : "In diesem Ordner liegt noch nichts. Tippe auf „Dokument“, um etwas abzulegen."}</p></li>`;
   else { el.innerHTML = list.map(card).join(""); bindCards(el); }
+}
+
+async function seedChecklist() {
+  const have = new Set(S.docs.map(d => d.title.toLowerCase()));
+  const now = new Date().toISOString();
+  let n = 0;
+  for (const [title, category, notes] of ID_CHECKLIST) {
+    if (have.has(title.toLowerCase())) continue;
+    await saveDoc({ id: C.newId(), title, category, tags: [], notes, docDate: "", deadline: "", remindDays: 90, files: [], thumb: null, created: now, todo: true }, [], []);
+    n++;
+  }
+  S.cat = "alle"; S.todo = n > 0; renderView();
+  toast(n ? `${plural(n, "Eintrag", "Einträge")} angelegt – jetzt Fotos hinzufügen` : "Checkliste ist schon vollständig angelegt");
 }
 
 function renderFristen() {
@@ -461,7 +533,7 @@ async function openDetail(doc) {
       <h1>${esc(doc.title)}</h1><button class="icon-btn" id="ed" aria-label="Bearbeiten">${ico("edit")}</button></header>
     <div class="sheet-body">
       <dl class="facts-grid">
-        <div><dt>Kategorie</dt><dd>${esc(catName(doc.category))}</dd></div>
+        <div><dt>Ordner</dt><dd>${esc(catName(doc))}</dd></div>
         ${doc.docDate ? `<div><dt>Dokumentdatum</dt><dd>${fmtDate(doc.docDate)}</dd></div>` : ""}
         ${due ? `<div><dt>Frist</dt><dd>${fmtDate(doc.deadline)} <span class="due ${due.cls}">${esc(due.label)}</span></dd></div>` : ""}
         ${doc.tags?.length ? `<div><dt>Tags</dt><dd class="tags">${doc.tags.map(t => `<i>${esc(t)}</i>`).join("")}</dd></div>` : ""}
@@ -521,7 +593,7 @@ function exportIcs(doc) {
 /* ---------------- Bearbeiten / Neu ---------------- */
 function openEditor(doc) {
   const isNew = !doc;
-  const d = doc ? structuredClone(doc) : { id: C.newId(), title: "", category: S.cat !== "alle" ? S.cat : "sonstiges", tags: [], notes: "", docDate: "", deadline: "", remindDays: 30, files: [], thumb: null, created: new Date().toISOString() };
+  const d = doc ? structuredClone(doc) : { id: C.newId(), title: "", category: S.cat !== "alle" ? `${S.cat}/${S.sub !== "alle" ? S.sub : mainEntry(S.cat)[2][0][0]}` : "sonstiges/allgemein", tags: [], notes: "", docDate: "", deadline: "", remindDays: 30, files: [], thumb: null, created: new Date().toISOString() };
   const pending = [], removed = [];
   const { el, close } = sheet(`
     <header class="sheet-top"><button class="icon-btn" data-close aria-label="Abbrechen">${ico("x")}</button>
@@ -537,7 +609,7 @@ function openEditor(doc) {
       </div>
       <label>Titel<input name="title" required maxlength="120" value="${esc(d.title)}" placeholder="z. B. Personalausweis"></label>
       <div class="grid2">
-        <label>Kategorie<select name="category">${CATS.map(c => `<option value="${c[0]}" ${c[0] === d.category ? "selected" : ""}>${esc(c[1])}</option>`).join("")}</select></label>
+        <label>Ordner<select name="category">${TREE.map(([m, n, subs]) => `<optgroup label="${esc(n)}">${subs.map(([sb, sn]) => `<option value="${m}/${sb}" ${`${m}/${sb}` === catKey(d) ? "selected" : ""}>${esc(sn)}</option>`).join("")}</optgroup>`).join("")}</select></label>
         <label>Dokumentdatum<input type="date" name="docDate" value="${esc(d.docDate)}"></label>
       </div>
       <label>Tags <small>(durch Komma getrennt)</small><input name="tags" value="${esc(d.tags.join(", "))}" placeholder="z. B. HUK, Kfz, 2025"></label>
@@ -617,6 +689,10 @@ async function renderSettings() {
       <div class="row wrap"><button class="btn primary" id="exp">${ico("down")} Backup erstellen</button>
       <label class="btn ghost">Backup einspielen<input type="file" id="imp" accept=".nfablage,application/json" hidden></label></div>
     </section>
+    <section class="panel"><h2>Checkliste</h2>
+      <p>Legt vorbereitete Einträge für Personalausweis, Reisepass, Führerschein, Urkunden, Steuer-ID, Krankenkassenkarte, Impfpass und Zeugnisse an. Du fügst dann nur noch Fotos und Ablaufdaten hinzu. Vorhandene Einträge werden nicht doppelt angelegt.</p>
+      <button class="btn ghost" id="seed2">${ico("note")} Checkliste Ausweisdokumente anlegen</button>
+    </section>
     <section class="panel"><h2>Sicherheit</h2>
       <label>Automatisch sperren nach<select id="lockMin">${[1, 2, 5, 10, 15].map(n => `<option value="${n}" ${n === S.prefs.lockMin ? "selected" : ""}>${n} ${n === 1 ? "Minute" : "Minuten"} ohne Aktivität</option>`).join("")}</select></label>
       <p class="hint">Zusätzlich sperrt die App, wenn sie länger als eine Minute im Hintergrund war.</p>
@@ -640,6 +716,7 @@ async function renderSettings() {
     </section>
     <p class="hint center">NF · Dokumentenablage ${APP_VERSION}</p>`;
   $("#exp").onclick = exportBackup;
+  $("#seed2").onclick = () => { S.view = "ablage"; seedChecklist(); };
   $("#odcon")?.addEventListener("click", connectDropbox);
   $("#odre")?.addEventListener("click", reconnectDropbox);
   $("#odsync")?.addEventListener("click", async () => { await Sync.syncNow(); renderSettings(); });
