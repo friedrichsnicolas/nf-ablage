@@ -1,0 +1,9 @@
+# Sicherheitsnetz: niemals Dokumente oder Backups ins Repo
+*.nfablage
+*.pdf
+*.jpg
+*.jpeg
+*.heic
+*.png
+!assets/**/*.png
+__pycache__/
