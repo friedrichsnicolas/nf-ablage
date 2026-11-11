@@ -3,7 +3,7 @@ import * as C from "./crypto.js";
 import * as DB from "./db.js";
 import * as Sync from "./sync.js";
 
-const APP_VERSION = "1.3";
+const APP_VERSION = "1.3.1";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -688,7 +688,7 @@ async function renderSettings() {
       <p>Das Backup ist eine einzelne, <b>verschlüsselte</b> Datei. Lege sie z. B. in iCloud Drive, OneDrive oder auf einen USB-Stick. Ohne dein Passwort ist sie wertlos. So überträgst du die Ablage auch auf ein anderes Gerät.</p>
       <p class="hint">${S.prefs.lastBackup ? `Letztes Backup: ${fmtDate(S.prefs.lastBackup)}` : "Noch kein Backup erstellt."}</p>
       <div class="row wrap"><button class="btn primary" id="exp">${ico("down")} Backup erstellen</button>
-      <label class="btn ghost">Backup einspielen<input type="file" id="imp" accept=".nfablage,application/json" hidden></label></div>
+      <label class="btn ghost">Backup einspielen<input type="file" id="imp" hidden></label></div>
     </section>
     <section class="panel"><h2>Checkliste</h2>
       <p>Legt vorbereitete Einträge für Personalausweis, Reisepass, Führerschein, Urkunden, Steuer-ID, Krankenkassenkarte, Impfpass und Zeugnisse an. Du fügst dann nur noch Fotos und Ablaufdaten hinzu. Vorhandene Einträge werden nicht doppelt angelegt.</p>
@@ -808,7 +808,7 @@ async function importBackup(file) {
 
 /* Backup auf einem neuen Gerät als kompletten Tresor einspielen. */
 function restoreBackupAtSetup() {
-  const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".nfablage,application/json";
+  const inp = document.createElement("input"); inp.type = "file";
   inp.onchange = async () => {
     let data; try { data = await readBackup(inp.files[0]); } catch (e) { return ask({ title: "Wiederherstellung fehlgeschlagen", text: esc(e.message), cancel: null }); }
     const key = await askBackupKey(data); if (!key) return;
