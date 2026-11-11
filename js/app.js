@@ -3,7 +3,7 @@ import * as C from "./crypto.js";
 import * as DB from "./db.js";
 import * as Sync from "./sync.js";
 
-const APP_VERSION = "1.2";
+const APP_VERSION = "1.3";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -18,6 +18,7 @@ const TREE = [
   ["mobilitaet", "Auto & Mobilität", [["fahrzeug", "Fahrzeugpapiere"], ["wartung", "Wartung & TÜV"], ["tickets", "Tickets & Abos"]]],
   ["gesundheit", "Gesundheit", [["befunde", "Befunde & Arztbriefe"], ["impfungen", "Impfungen"], ["rezepte", "Rezepte & Rechnungen"]]],
   ["beruf", "Beruf & Bildung", [["vertrag", "Arbeitsvertrag"], ["gehalt", "Gehaltsabrechnungen"], ["zeugnisse", "Zeugnisse & Zertifikate"], ["weiterbildung", "Weiterbildung"]]],
+  ["brand", "Personal Brand", [["logo", "Logo & Styleguide"], ["bewerbung", "Bewerbungsunterlagen"], ["visitenkarten", "Visitenkarten"], ["vorlagen", "Präsentation & Briefvorlagen"], ["online", "LinkedIn, Website & Signatur"]]],
   ["vertraege", "Verträge & Mitgliedschaften", [["abos", "Abos & Streaming"], ["vereine", "Vereine & Mitgliedschaften"], ["sonstige", "Sonstige Verträge"]]],
   ["kauf", "Kaufbelege & Garantien", [["elektronik", "Elektronik"], ["haushalt", "Haushalt & Möbel"], ["sonstige", "Sonstige Käufe"]]],
   ["recht", "Vorsorge & Recht", [["vollmachten", "Vollmachten & Verfügungen"], ["rente", "Rente & Behörden"], ["rechtliches", "Rechtliches"]]],
@@ -602,7 +603,7 @@ function openEditor(doc) {
       <div class="drop" id="drop">
         <p>Dateien hierher ziehen oder</p>
         <div class="row center wrap">
-          <label class="btn ghost">${ico("file")} Datei wählen<input type="file" id="pick" accept="application/pdf,image/*" multiple hidden></label>
+          <label class="btn ghost">${ico("file")} Datei wählen<input type="file" id="pick" multiple hidden></label>
           <label class="btn ghost">${ico("camera")} Foto aufnehmen<input type="file" id="cam" accept="image/*" capture="environment" hidden></label>
         </div>
         <ul class="flist" id="flist"></ul>

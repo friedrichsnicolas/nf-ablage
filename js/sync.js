@@ -111,7 +111,7 @@ async function fail(r, what) { throw new Error(`${what}: ${r.status} ${(await er
 
 async function listFolder(folder) {
   const out = new Map();
-  let r = await api("/2/files/list_folder", { path: "/" + folder, limit: 2000 });
+  let r = await api("/2/files/list_folder", { path: folder ? "/" + folder : "", limit: 2000 }); // "" = Wurzel des App-Ordners
   for (;;) {
     if (r.status === 409) { if ((await errOf(r)).includes("not_found")) return out; await fail(r, "Liste"); }
     if (!r.ok) await fail(r, "Liste");
@@ -123,8 +123,19 @@ async function listFolder(folder) {
 }
 async function download(path) {
   const r = await call(CONTENT, "/2/files/download", { arg: { path: "/" + path }, rpc: false });
-  if (r.status === 409) { if ((await errOf(r)).includes("not_found")) return null; await fail(r, "Download"); }
-  if (!r.ok) await fail(r, "Download");
+  if (r.status === 409) { if ((await errOf(r)).includes("not_found")) return null; await fail(r, "Download " + path); }
+  if (r.status === 400) return downloadViaLink(path, r); // Ausweichweg über temporären Link
+  if (!r.ok) await fail(r, "Download " + path);
+  return new Uint8Array(await r.arrayBuffer());
+}
+async function downloadViaLink(path, first) {
+  const firstErr = await errOf(first);
+  const t = await api("/2/files/get_temporary_link", { path: "/" + path });
+  if (t.status === 409 && (await errOf(t)).includes("not_found")) return null;
+  if (!t.ok) throw new Error(`Download ${path}: 400 ${firstErr} / Link ${t.status} ${(await errOf(t)).slice(0, 200)}`);
+  const { link } = await t.json();
+  const r = await fetch(link);
+  if (!r.ok) throw new Error(`Download ${path} (Link): ${r.status}`);
   return new Uint8Array(await r.arrayBuffer());
 }
 /* match: rev (nur überschreiben, wenn unverändert) | "new" (nur anlegen) | null (immer überschreiben) */
@@ -148,6 +159,8 @@ const unpackFile = (id, u8) => ({ id, iv: u8.slice(0, 12), ct: u8.slice(12) });
 
 /* ---------------- Tresor in Dropbox ---------------- */
 export async function remoteVault() {
+  // Erst nachsehen, ob es die Datei gibt – ein leerer, neuer App-Ordner liefert sonst teils Fehler statt „nicht gefunden“.
+  if (!(await listFolder("")).has("vault.json")) return null;
   const u8 = await download("vault.json");
   return u8 ? JSON.parse(td.decode(u8)) : null;
 }

@@ -1,6 +1,6 @@
 /* Offline-Cache: enthält ausschließlich die App-Dateien, niemals Dokumente.
    Bei Änderungen VERSION erhöhen. */
-const VERSION = "nf-ablage-v6";
+const VERSION = "nf-ablage-v7";
 const FILES = [
   "./", "index.html", "app.css", "js/app.js", "js/crypto.js", "js/db.js", "js/sync.js", "js/config.js", "manifest.webmanifest",
   "assets/fonts/Inter-Regular.ttf", "assets/fonts/Inter-Medium.ttf",
