@@ -3,5 +3,5 @@
  * im Code stehen (PKCE, kein App-Secret). Leer lassen = Abgleich ausgeblendet.
  */
 export const DROPBOX = {
-  appKey: "",
+  appKey: "1jhcbp6cdeylxyv",
 };
