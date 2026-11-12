@@ -278,7 +278,17 @@ async function run() {
       if (res.conflict) { // gleichzeitig woanders geändert: jüngere Fassung gewinnt
         const u8 = await download(`docs/${id}.json`);
         const rrec = u8 && unpackDoc(id, u8), rbody = rrec && await C.decryptJSON(S.key, rrec);
-        if (rbody && (rbody.updated || "") > (doc.updated || "")) {
+        if (rbody && doc.kind && hooks?.merge) { // Haushaltsbuch: beide Fassungen zusammenführen
+          const merged = hooks.merge(doc, { id, ...rbody });
+          merged.updated = new Date().toISOString();
+          const { id: _, ...mbody } = merged;
+          const mrec = await C.encryptJSON(S.key, mbody, id);
+          await DB.write({ docs: [mrec] });
+          const i = S.docs.findIndex(d => d.id === id); if (i >= 0) S.docs[i] = merged; changed = true;
+          const rev = (await listFolder("docs")).get(`${id}.json`);
+          res = await upload(`docs/${id}.json`, packDoc(mrec), rev || null);
+          if (res.conflict) res = await upload(`docs/${id}.json`, packDoc(mrec), null);
+        } else if (rbody && (rbody.updated || "") > (doc.updated || "")) {
           await applyRemote(rrec, rbody); changed = true;
           res = { etag: (await listFolder("docs")).get(`${id}.json`) };
         } else res = await upload(`docs/${id}.json`, packDoc(rec), null);

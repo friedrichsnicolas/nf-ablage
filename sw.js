@@ -1,8 +1,8 @@
 /* Offline-Cache: enthält ausschließlich die App-Dateien, niemals Dokumente.
    Bei Änderungen VERSION erhöhen. */
-const VERSION = "nf-ablage-v8";
+const VERSION = "nf-ablage-v9";
 const FILES = [
-  "./", "index.html", "app.css", "js/app.js", "js/crypto.js", "js/db.js", "js/sync.js", "js/config.js", "manifest.webmanifest",
+  "./", "index.html", "app.css", "js/app.js", "js/crypto.js", "js/db.js", "js/sync.js", "js/config.js", "js/haushalt.js", "js/ki.js", "js/csv.js", "js/charts.js", "manifest.webmanifest",
   "assets/fonts/Inter-Regular.ttf", "assets/fonts/Inter-Medium.ttf",
   "assets/fonts/Playfair-Regular.ttf", "assets/fonts/Playfair-Medium.ttf",
   "assets/img/NF_Monogramm_champagner.svg", "assets/img/NF_Wortbildmarke_quer_gruen.svg",
