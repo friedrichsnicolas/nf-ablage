@@ -1,6 +1,6 @@
-# NF · Dokumentenablage
+# NF · Dokumentenablage & Haushaltsbuch
 
-Private, verschlüsselte Dokumentenablage als installierbare Web-App (PWA). Kein Server, keine Cloud, kein Konto.
+Private, verschlüsselte Dokumentenablage mit Haushaltsbuch als installierbare Web-App (PWA). Kein Server, keine Cloud, kein Konto.
 
 ## Sicherheitsmodell
 - Alle Dokumente und Angaben werden **im Browser** mit AES-256-GCM verschlüsselt, bevor sie gespeichert werden (Web Crypto API).
@@ -10,6 +10,17 @@ Private, verschlüsselte Dokumentenablage als installierbare Web-App (PWA). Kein
 - Automatische Sperre nach einstellbarer Inaktivität und nach 1 Minute im Hintergrund; Sperren lädt die Seite neu und verwirft alles Entschlüsselte.
 - **Passwort und Wiederherstellungsschlüssel verloren = Daten verloren.** Es gibt keine Hintertür.
 - Dieses Repository enthält nur den Programmcode – **niemals Dokumente hier hochladen.**
+
+## Haushaltsbuch
+Umschalter **Ablage | Haushalt** oben. Gleicher Tresor, gleiches Passwort, gleiches Backup und gleicher Dropbox-Abgleich.
+- **Übersicht:** Einnahmen, Ausgaben, Saldo, Sparquote, Budget-Tracker (Ausgaben im Monatsverlauf gegen Budget), Ausgaben nach Kategorie, 12-Monats-Verlauf, Kontostände.
+- **Buchungen:** Suche und Filter, „Zu prüfen“-Liste, Belege aus der Ablage verknüpfen oder neu fotografieren.
+- **Budget:** Plan je Kategorie (Standard oder nur für einen Monat), geplante Einnahmen, „frei zum Sparen“, Vorschlag aus den letzten 3 Monaten.
+- **Tracker:** Sparziele, automatisch erkannte Fixkosten & Abos, Einkäufe ab 100 € ohne Beleg.
+- **Import:** CSV/Excel aus dem Online-Banking (Sparkasse, Volksbank, ING, DKB, comdirect, N26 …), American-Express-Export (CSV/Excel, Vorzeichen wird automatisch umgedreht, eigenes Konto) und PDF-Abrechnungen per KI. Doppelte werden übersprungen.
+- **Automatische Zuordnung:** lokal per eigenen Regeln, Gelerntem aus Korrekturen und Händler-Wörterbuch. Optional **Claude (Anthropic)** mit eigenem API-Schlüssel für unbekannte Händler, Belegfotos und PDF-Abrechnungen. Gesendet werden nur Datum, Betrag, Empfänger und gekürzter Zweck (IBAN/Referenzen entfernt) bzw. der gewählte Beleg.
+
+Daten: `fin-cfg` (Einstellungen, Budgets, Ziele) und `fin-m-JJJJ-MM` (Buchungen je Monat) als verschlüsselte Datensätze; bei gleichzeitiger Änderung auf zwei Geräten werden Buchungen zusammengeführt.
 
 ## Geräte-Abgleich über Dropbox
 Optional in *Einstellungen → Geräte-Abgleich*. Die App lädt nur bereits verschlüsselte Pakete in ihren
@@ -32,5 +43,5 @@ Tipp iPhone: In Safari „Teilen → Zum Home-Bildschirm“. Als installierte Ap
 Push auf `main` startet `.github/workflows/pages.yml`. Einmalig: *Settings → Pages → Source: GitHub Actions*.
 
 ## Dateien
-`index.html` · `app.css` · `js/app.js` (Oberfläche) · `js/crypto.js` (Verschlüsselung) · `js/db.js` (Speicher) · `sw.js` (Offline) ·
+`index.html` · `app.css` · `js/app.js` (Oberfläche) · `js/haushalt.js` (Haushaltsbuch) · `js/ki.js` (Zuordnung, Claude) · `js/csv.js` (Import) · `js/charts.js` (Diagramme) · `js/crypto.js` (Verschlüsselung) · `js/db.js` (Speicher) · `sw.js` (Offline) ·
 `tools/build_icons.py` (Icons neu erzeugen)

@@ -2,8 +2,9 @@
 import * as C from "./crypto.js";
 import * as DB from "./db.js";
 import * as Sync from "./sync.js";
+import * as Fin from "./haushalt.js";
 
-const APP_VERSION = "1.3.1";
+const APP_VERSION = "1.4.0";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -12,7 +13,7 @@ const root = $("#app");
 /* Ablagestruktur: Hauptordner mit Unterordnern. Gespeichert wird "haupt/unter". */
 const TREE = [
   ["identitaet", "Identität & Urkunden", [["ausweise", "Ausweise"], ["urkunden", "Urkunden"], ["nachweise", "Nachweise & Bescheinigungen"]]],
-  ["finanzen", "Finanzen & Steuern", [["bank", "Bank & Konten"], ["steuern", "Steuern"], ["anlagen", "Altersvorsorge & Anlagen"], ["kredite", "Kredite & Finanzierung"]]],
+  ["finanzen", "Finanzen & Steuern", [["belege", "Belege & Quittungen"], ["bank", "Bank & Konten"], ["steuern", "Steuern"], ["anlagen", "Altersvorsorge & Anlagen"], ["kredite", "Kredite & Finanzierung"]]],
   ["versicherungen", "Versicherungen", [["kranken", "Kranken & Pflege"], ["haftpflicht", "Haftpflicht & Hausrat"], ["kfz", "Kfz"], ["leben", "Leben & Berufsunfähigkeit"], ["weitere", "Rechtsschutz & weitere"]]],
   ["wohnen", "Wohnen", [["miete", "Miete & Eigentum"], ["energie", "Nebenkosten & Energie"], ["internet", "Telefon & Internet"], ["handwerker", "Handwerker & Reparaturen"]]],
   ["mobilitaet", "Auto & Mobilität", [["fahrzeug", "Fahrzeugpapiere"], ["wartung", "Wartung & TÜV"], ["tickets", "Tickets & Abos"]]],
@@ -64,6 +65,17 @@ const I = { // schlichte Linien-Icons
   shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
   cloud: '<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5A3.75 3.75 0 0 1 17.5 18z"/>',
+  chart: '<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>',
+  list: '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r=".8"/><circle cx="4" cy="12" r=".8"/><circle cx="4" cy="18" r=".8"/>',
+  wallet: '<path d="M4 7a2 2 0 0 1 2-2h11v4"/><rect x="3.5" y="8" width="17" height="12" rx="2"/><path d="M16 14h2"/>',
+  target: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".8"/>',
+  clip: '<path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L9.7 17.2a1.7 1.7 0 0 1-2.4-2.4L15 7"/>',
+  spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
+  upload: '<path d="M12 16V5M7 10l5-5 5 5M5 20h14"/>',
+  out: '<path d="M7 17L17 7M9 7h8v8"/>',
+  in: '<path d="M17 7L7 17M15 17H7V9"/>',
+  swap: '<path d="M4 8h14l-3-3M20 16H6l3 3"/>',
 };
 const ico = (n, cls = "ico") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
 
@@ -75,6 +87,7 @@ const S = {
 };
 const DEFAULT_PREFS = { lockMin: 5, lastBackup: null, fails: 0, failUntil: 0 };
 const savePrefs = () => DB.setMeta("prefs", S.prefs);
+const ADocs = () => S.docs.filter(d => !d.kind); // nur Ablage-Dokumente (ohne Haushaltsbuch-Datensätze)
 
 /* ---------------- Hilfen ---------------- */
 const fmtDate = d => d ? new Date(d.length === 10 ? d + "T00:00" : d).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
@@ -175,7 +188,8 @@ async function boot() {
   }
   S.meta = await DB.getMeta("vault");
   S.prefs = { ...DEFAULT_PREFS, ...(await DB.getMeta("prefs")) };
-  await Sync.init(S, { onStatus: renderSyncStatus, onRemoteChange: () => { if (S.key && $("#view")) renderView(); } });
+  Fin.init(finCtx());
+  await Sync.init(S, { onStatus: renderSyncStatus, onRemoteChange: () => { if (S.key && $("#view")) renderView(); }, merge: Fin.merge });
   S.meta ? renderLock() : renderWelcome();
 }
 
@@ -247,7 +261,7 @@ function renderRecoveryKey(recoveryKey, first) {
 
 /* ---------------- Entsperren ---------------- */
 function renderLock() {
-  gate(`<h1>Dokumentenablage</h1><p class="gate-sub">Privat · verschlüsselt · nur auf diesem Gerät</p>
+  gate(`<h1>Dokumentenablage</h1><p class="gate-sub">Dokumente & Haushaltsbuch · privat · verschlüsselt</p>
     <form id="f" class="gate-form">
       <input type="text" name="username" value="NF Dokumentenablage" autocomplete="username" hidden>
       <label>Master-Passwort<input type="password" name="pw" autocomplete="current-password" required></label>
@@ -371,22 +385,31 @@ async function fileBlob(f) {
 }
 
 /* ---------------- Hauptansicht ---------------- */
+const isFin = () => S.prefs.mode === "haushalt";
 function renderMain() {
+  const fin = isFin();
+  if (fin && !Fin.TABS.some(t => t[0] === S.view)) S.view = "uebersicht";
+  if (!fin && !["ablage", "fristen", "einstellungen"].includes(S.view)) S.view = "ablage";
   root.innerHTML = `
     <header class="top">
       <img class="wordmark" src="assets/img/NF_Wortbildmarke_quer_gruen.svg" alt="Nicolas Friedrichs">
-      <span class="top-title">Dokumentenablage</span>
+      <div class="seg top-seg" role="tablist" aria-label="Bereich"><button data-m="ablage" class="${fin ? "" : "on"}">Ablage</button><button data-m="haushalt" class="${fin ? "on" : ""}">Haushalt</button></div>
       <button class="icon-btn sync" id="syncbtn" hidden>${ico("cloud")}</button>
       <button class="icon-btn" id="lockbtn" title="Jetzt sperren" aria-label="Jetzt sperren">${ico("lock")}</button>
     </header>
     <div id="banner"></div>
     <main id="view" class="view"></main>
-    <button class="fab" id="add" aria-label="Dokument hinzufügen">${ico("plus")}<span>Dokument</span></button>
-    <nav class="tabs">
+    <button class="fab" id="add" aria-label="${fin ? "Buchung" : "Dokument"} hinzufügen">${ico("plus")}<span>${fin ? "Buchung" : "Dokument"}</span></button>
+    <nav class="tabs ${fin ? "five" : ""}">${fin ? Fin.tabsHtml() : `
       <button data-v="ablage">${ico("folder")}<span>Ablage</span></button>
       <button data-v="fristen">${ico("cal")}<span>Fristen</span><b class="badge" id="badge" hidden></b></button>
-      <button data-v="einstellungen">${ico("gear")}<span>Einstellungen</span></button>
+      <button data-v="einstellungen">${ico("gear")}<span>Einstellungen</span></button>`}
     </nav>`;
+  $$(".top-seg [data-m]").forEach(b => b.onclick = async () => {
+    if ((b.dataset.m === "haushalt") === isFin()) return;
+    S.prefs.mode = b.dataset.m; await savePrefs();
+    S.view = isFin() ? "uebersicht" : "ablage"; renderMain();
+  });
   $("#lockbtn").onclick = lock;
   $("#syncbtn").onclick = () => {
     const i = Sync.info();
@@ -394,7 +417,7 @@ function renderMain() {
     Sync.syncNow(); if (i.text && i.state === "error") toast(i.text);
   };
   renderSyncStatus(Sync.info());
-  $("#add").onclick = () => openEditor(null);
+  $("#add").onclick = () => isFin() ? Fin.addMenu() : openEditor(null);
   $$(".tabs button").forEach(b => b.onclick = () => { S.view = b.dataset.v; renderView(); });
   renderView();
 }
@@ -407,7 +430,7 @@ function renderBanner() {
   }
   const last = S.prefs.lastBackup, days = last ? Math.floor((Date.now() - new Date(last)) / 864e5) : null;
   const synced = Sync.connected() && Sync.info().lastSync;
-  if (S.docs.length && !synced && (days === null || days > 30)) {
+  if (ADocs().length && !synced && (days === null || days > 30)) {
     b.innerHTML = `<div class="banner">${ico("shield")}<span>${days === null ? "Noch kein Backup erstellt." : `Letztes Backup vor ${days} Tagen.`} Ein verschlüsseltes Backup schützt vor Geräteverlust.</span><button class="btn small" id="bk">Backup</button></div>`;
     $("#bk").onclick = exportBackup;
   } else b.innerHTML = "";
@@ -416,10 +439,11 @@ function renderBanner() {
 function renderView() {
   $$(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.v === S.view));
   $("#add").hidden = S.view === "einstellungen";
-  const due = S.docs.filter(d => dueInfo(d)?.soon).length, badge = $("#badge");
-  badge.hidden = !due; badge.textContent = due;
+  const due = isFin() ? Fin.badgeCount() : ADocs().filter(d => dueInfo(d)?.soon).length, badge = $("#badge");
+  if (badge) { badge.hidden = !due; badge.textContent = due; }
   renderBanner();
-  ({ ablage: renderAblage, fristen: renderFristen, einstellungen: renderSettings })[S.view]();
+  if (isFin()) Fin.render(S.view);
+  else ({ ablage: renderAblage, fristen: renderFristen, einstellungen: renderSettings })[S.view]();
   window.scrollTo(0, 0);
 }
 
@@ -454,26 +478,26 @@ function renderList() {
   const words = S.q.toLowerCase().split(/\s+/).filter(Boolean);
   const hay = d => [d.title, d.notes, catName(d), ...(d.tags || []), ...d.files.map(f => f.name), fmtDate(d.docDate)].join(" ").toLowerCase();
   const nav = $("#nav"), el = $("#list");
-  const todos = S.docs.filter(d => d.todo);
+  const todos = ADocs().filter(d => d.todo);
   if (S.todo && !todos.length) S.todo = false;
   let list, head = "";
 
   if (words.length) { // Suche: flache Trefferliste über alle Ordner
-    list = S.docs.filter(d => words.every(w => hay(d).includes(w)));
+    list = ADocs().filter(d => words.every(w => hay(d).includes(w)));
     nav.innerHTML = `<p class="lead">${plural(list.length, "Treffer", "Treffer")} in allen Ordnern</p>`;
   } else if (S.todo) {
     list = todos;
     nav.innerHTML = `<div class="crumbs"><button class="chip" data-home>‹ Alle Ordner</button><span>Noch offen</span></div>
       <p class="lead">Vorbereitete Einträge ohne Datei. Tippe einen an, dann auf ${ico("edit")} und füge Foto oder PDF hinzu.</p>`;
   } else if (S.cat === "alle") { // Startseite: Ordnerübersicht + zuletzt geändert
-    const count = id => S.docs.filter(d => mainOf(d) === id).length;
+    const count = id => ADocs().filter(d => mainOf(d) === id).length;
     nav.innerHTML = `${todos.length ? `<button class="todo-bar" data-todo>${ico("note")}<span><b>${plural(todos.length, "Dokument fehlt", "Dokumente fehlen")} noch</b> aus deiner Checkliste</span><span>›</span></button>` : ""}
       <div class="folders">${TREE.map(([id, name]) => `<button class="folder ${count(id) ? "" : "empty-f"}" data-c="${id}">${ico("folder")}<span>${esc(name)}</span><small>${count(id)}</small></button>`).join("")}</div>
-      ${S.docs.length ? `<h2 class="sec">Zuletzt geändert</h2>` : ""}`;
-    list = [...S.docs].sort(SORTERS.neu).slice(0, 8);
+      ${ADocs().length ? `<h2 class="sec">Zuletzt geändert</h2>` : ""}`;
+    list = ADocs().sort(SORTERS.neu).slice(0, 8);
   } else { // In einem Ordner: Unterordner als Chips
     const [, name, subs] = mainEntry(S.cat);
-    const inMain = S.docs.filter(d => mainOf(d) === S.cat);
+    const inMain = ADocs().filter(d => mainOf(d) === S.cat);
     const cnt = sub => inMain.filter(d => subOf(d) === sub).length;
     nav.innerHTML = `<div class="crumbs"><button class="chip" data-home>‹ Alle Ordner</button><span>${esc(name)}</span></div>
       <div class="chips">${[["alle", "Alle", inMain.length], ...subs.map(([id, n]) => [id, n, cnt(id)])]
@@ -487,7 +511,7 @@ function renderList() {
   $$("[data-home]", nav).forEach(b => b.onclick = () => { S.cat = "alle"; S.sub = "alle"; S.todo = false; renderList(); });
   $$("[data-todo]", nav).forEach(b => b.onclick = () => { S.todo = true; renderList(); window.scrollTo(0, 0); });
 
-  if (!S.docs.length) {
+  if (!ADocs().length) {
     el.innerHTML = `<li class="empty"><h2>Noch leer</h2><p>Lege dein erstes Dokument ab – oder starte mit der Checkliste für Ausweise, Urkunden und Nachweise.</p>
       <button class="btn primary" id="seed">${ico("note")} Checkliste Ausweisdokumente anlegen</button></li>`;
     $("#seed").onclick = seedChecklist;
@@ -496,7 +520,7 @@ function renderList() {
 }
 
 async function seedChecklist() {
-  const have = new Set(S.docs.map(d => d.title.toLowerCase()));
+  const have = new Set(ADocs().map(d => d.title.toLowerCase()));
   const now = new Date().toISOString();
   let n = 0;
   for (const [title, category, notes] of ID_CHECKLIST) {
@@ -510,7 +534,7 @@ async function seedChecklist() {
 
 function renderFristen() {
   const v = $("#view");
-  const withDue = S.docs.filter(d => d.deadline).map(d => ({ d, i: dueInfo(d) })).sort((a, b) => a.i.n - b.i.n);
+  const withDue = ADocs().filter(d => d.deadline).map(d => ({ d, i: dueInfo(d) })).sort((a, b) => a.i.n - b.i.n);
   const group = (title, items) => items.length ? `<h2 class="sec">${title}</h2><ul class="list">${items.map(x => card(x.d)).join("")}</ul>` : "";
   v.innerHTML = `<p class="lead">Ablaufdaten, Kündigungs- und Abgabefristen deiner Dokumente. Fristen werden hervorgehoben, sobald die eingestellte Vorwarnzeit beginnt.</p>` +
     (withDue.length
@@ -541,6 +565,7 @@ async function openDetail(doc) {
       </dl>
       ${doc.notes ? `<div class="notes">${esc(doc.notes)}</div>` : ""}
       <div id="files" class="files">${doc.files.length ? '<p class="hint">Entschlüssele …</p>' : ""}</div>
+      ${Fin.docLinks(doc)}
       <div class="row wrap">
         ${due ? `<button class="btn ghost" id="ics">${ico("cal")} In Kalender eintragen</button>` : ""}
         <button class="btn ghost danger-text" id="del">${ico("trash")} Löschen</button>
@@ -557,6 +582,7 @@ async function openDetail(doc) {
     }
   };
   $("#ics", el)?.addEventListener("click", () => exportIcs(doc));
+  Fin.bindDocLinks(el, doc, done);
 
   const box = $("#files", el); box.innerHTML = "";
   for (const f of doc.files) {
@@ -673,7 +699,7 @@ async function renderSettings() {
   const v = $("#view");
   const est = await navigator.storage?.estimate?.().catch(() => null);
   const persisted = await navigator.storage?.persisted?.().catch(() => false);
-  const nFiles = S.docs.reduce((a, d) => a + d.files.length, 0);
+  const nFiles = ADocs().reduce((a, d) => a + d.files.length, 0);
   const si = Sync.info();
   const syncPanel = !Sync.enabled() ? "" : `<section class="panel"><h2>Geräte-Abgleich (Dropbox)</h2>
       ${Sync.connected() ? `<p>Verbunden${si.account ? ` mit der Dropbox von <b>${esc(si.account)}</b>` : ""}. ${si.lastSync ? `Zuletzt abgeglichen: ${new Date(si.lastSync).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}.` : ""}</p>
@@ -700,14 +726,14 @@ async function renderSettings() {
       <div class="row wrap"><button class="btn ghost" id="chpw">Passwort ändern</button><button class="btn ghost" id="newrk">Neuer Wiederherstellungsschlüssel</button></div>
     </section>
     <section class="panel"><h2>Speicher</h2>
-      <p>${plural(S.docs.length, "Dokument", "Dokumente")} · ${plural(nFiles, "Datei", "Dateien")}${est ? ` · ${fmtSize(est.usage || 0)} belegt` : ""}</p>
+      <p>${plural(ADocs().length, "Dokument", "Dokumente")}${S.docs.some(d => d.kind === "fin-month") ? ` · ${plural(Fin.allTx().length, "Buchung", "Buchungen")}` : ""} · ${plural(nFiles, "Datei", "Dateien")}${est ? ` · ${fmtSize(est.usage || 0)} belegt` : ""}</p>
       <p class="hint">${persisted ? "Dauerhafter Speicher ist aktiv: der Browser löscht die Daten nicht von selbst." : "Tipp: Installiere die App auf dem Homescreen, damit der Browser den Speicher nicht aufräumt. Erstelle trotzdem regelmäßig Backups."}</p>
     </section>
     <section class="panel"><h2>So schützt die App deine Daten</h2>
       <ul class="plain">
         <li>Dateien und Angaben werden mit <b>AES-256-GCM</b> verschlüsselt, bevor sie gespeichert werden.</li>
         <li>Der Schlüssel wird aus deinem Master-Passwort abgeleitet (PBKDF2, 600.000 Runden) und existiert nur, solange die App entsperrt ist.</li>
-        <li>Die App hat keinen eigenen Server. Verbindungen sind nur zu Dropbox (Geräte-Abgleich, falls eingeschaltet) erlaubt, alle anderen blockiert eine strenge Sicherheitsrichtlinie. Zu Dropbox gelangen nur verschlüsselte Pakete.</li>
+        <li>Die App hat keinen eigenen Server. Verbindungen sind nur zu Dropbox (Geräte-Abgleich, nur verschlüsselte Pakete) und – falls du die KI-Zuordnung im Haushaltsbuch einschaltest – zu Anthropic erlaubt. Alle anderen blockiert eine strenge Sicherheitsrichtlinie.</li>
         <li>Wer dein Gerät entsperrt in den Händen hält, während die Ablage offen ist, sieht die Dokumente. Darum sperrt sie sich automatisch.</li>
       </ul>
     </section>
@@ -790,8 +816,12 @@ async function importBackup(file) {
   let added = 0;
   const fileMap = new Map(data.files.map(f => [f.id, f]));
   for (const r of data.docs) {
-    if (S.docs.some(d => d.id === r.id)) continue;
-    const doc = { id: r.id, ...(await C.decryptJSON(keyB, deser(r))) };
+    const existing = S.docs.find(d => d.id === r.id);
+    if (existing && !existing.kind) continue;
+    let doc = { id: r.id, ...(await C.decryptJSON(keyB, deser(r))) };
+    if (existing) { // Haushaltsbuch: Buchungen zusammenführen statt überspringen
+      doc = Fin.merge(existing, doc); await saveDoc(doc, [], []); added++; continue;
+    }
     const files = [];
     for (const fm of doc.files) {
       const fr = fileMap.get(fm.id); if (!fr) continue;
@@ -897,6 +927,16 @@ async function connectNewDevice() {
   navigator.storage?.persist?.();
   await afterUnlock();
   toast("Ablage wird geladen …");
+}
+
+/* Hilfen für den Haushaltsbuch-Bereich */
+function finCtx() {
+  return {
+    S, $, $$, esc, ico, toast, ask, sheet, busy, saveDoc, fileBlob, saveFile, makeThumb, plural, fmtDate, catName, openDetail,
+    newId: C.newId, adocs: ADocs, renderSettings,
+    go: v => { S.view = v; renderView(); },
+    refresh: () => { if (!$("#view")) return; const y = scrollY; renderView(); scrollTo(0, y); },
+  };
 }
 
 boot();
