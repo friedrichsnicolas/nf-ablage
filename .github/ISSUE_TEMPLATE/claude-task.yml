@@ -1,0 +1,46 @@
+name: Claude implementation task
+description: Define a scoped implementation for Claude and review by ChatGPT
+title: "[Feature] "
+labels: []
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal and current behavior
+      description: Explain the problem without including real personal data.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Provide observable pass/fail conditions.
+      placeholder: |
+        - [ ] Scenario 1
+        - [ ] Scenario 2
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Out of scope and compatibility
+      description: State what must remain unchanged.
+  - type: textarea
+    id: testing
+    attributes:
+      label: Verification plan
+      description: Include desktop, iPhone, offline and sync scenarios as applicable.
+  - type: textarea
+    id: security
+    attributes:
+      label: Privacy, security, data and rollback
+      description: Do not paste credentials, customer records or private exports.
+  - type: checkboxes
+    id: agreement
+    attributes:
+      label: Agent workflow
+      options:
+        - label: Claude implements on a feature branch and opens a draft PR.
+          required: true
+        - label: ChatGPT reviews; the owner authorizes any merge.
+          required: true
